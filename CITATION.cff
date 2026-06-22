@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Developer"
+    given-names: "Anonymous"
+title: "TheSuperRAG: Self-Healing RAG Backend"
+version: "2.0.0"
+date-released: 2026-06-22
+url: "https://github.com/your-username/TheSuperRAG"
+repository-code: "https://github.com/your-username/TheSuperRAG"
+abstract: >-
+  TheSuperRAG is a Self-Healing Retrieval-Augmented Generation (RAG) backend with hybrid search, re-ranking, citations, confidence scoring, and live document management.
+keywords:
+  - RAG
+  - Machine Learning
+  - Natural Language Processing
+  - LLM
+  - Qdrant
+  - FastAPI
+  - LangChain
+  - LangGraph
+license: MIT
