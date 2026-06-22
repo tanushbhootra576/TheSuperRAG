@@ -25,7 +25,7 @@ It provides an advanced document ingestion and chat interface using FastAPI, Lan
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/TheSuperRAG.git
+   git clone https://github.com/tanushbhootra576/TheSuperRAG.git
    cd TheSuperRAG
    ```
 

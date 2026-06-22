@@ -6,8 +6,8 @@ authors:
 title: "TheSuperRAG: Self-Healing RAG Backend"
 version: "2.0.0"
 date-released: 2026-06-22
-url: "https://github.com/your-username/TheSuperRAG"
-repository-code: "https://github.com/your-username/TheSuperRAG"
+url: "https://github.com/tanushbhootra576/TheSuperRAG"
+repository-code: "https://github.com/tanushbhootra576/TheSuperRAG"
 abstract: >-
   TheSuperRAG is a Self-Healing Retrieval-Augmented Generation (RAG) backend with hybrid search, re-ranking, citations, confidence scoring, and live document management.
 keywords:
