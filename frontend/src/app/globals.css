@@ -3,9 +3,54 @@
 
 @theme {
   --font-sans: 'Jost', sans-serif;
+  
+  --breakpoint-xs: 375px;
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+
+  --spacing-page-x-mobile: 16px;
+  --spacing-page-x-tablet: 32px;
+  --spacing-page-x-desktop: 48px;
+
+  --spacing-section-mobile: 24px;
+  --spacing-section-tablet: 40px;
+  --spacing-section-desktop: 64px;
 }
 
 :root {
+  /* Fluid Typography */
+  --text-xs: clamp(0.7rem, 1.5vw, 0.75rem);
+  --text-sm: clamp(0.8rem, 1.8vw, 0.875rem);
+  --text-base: clamp(0.9rem, 2vw, 1rem);
+  --text-lg: clamp(1rem, 2.5vw, 1.125rem);
+  --text-xl: clamp(1.1rem, 3vw, 1.25rem);
+  --text-2xl: clamp(1.25rem, 4vw, 1.5rem);
+  --text-3xl: clamp(1.5rem, 5vw, 1.875rem);
+  --text-4xl: clamp(1.75rem, 6vw, 2.25rem);
+
+  /* Theme Colors - Light (Bauhaus) */
+  --bg-primary: #F4F4F4;
+  --bg-secondary: #E9ECEF;
+  --bg-tertiary: #FFFFFF;
+  --text-primary: #1A1A1A;
+  --text-secondary: #4A4A4A;
+  --text-muted: #8A8A8A;
+  --border: #E9ECEF;
+  --border-strong: #1A1A1A;
+  --accent: #E23D28;
+  --accent-hover: #0F4C81;
+  --accent-muted: rgba(226, 61, 40, 0.1);
+  --success: #28A745;
+  --warning: #F5D04C;
+  --error: #E23D28;
+  --shadow-sm: 2px 2px 0px 0px var(--border-strong);
+  --shadow-md: 4px 4px 0px 0px var(--border-strong);
+  --shadow-lg: 6px 6px 0px 0px var(--border-strong);
+
+  /* Original Bauhaus for specific elements */
   --bauhaus-red: #E23D28;
   --bauhaus-blue: #0F4C81;
   --bauhaus-yellow: #F5D04C;
@@ -14,13 +59,58 @@
   --bauhaus-gray: #E9ECEF;
 }
 
+[data-theme="dark"] {
+  --bg-primary: #0F0F11;
+  --bg-secondary: #18181B;
+  --bg-tertiary: #1E1E24;
+  --text-primary: #F4F4F4;
+  --text-secondary: #D4D4D8;
+  --text-muted: #A1A1AA;
+  --border: #3F3F46;
+  --border-strong: #71717A;
+  
+  /* Brighten by 15% */
+  --accent: #F45D48; 
+  --accent-hover: #2F6C91;
+  --accent-muted: rgba(244, 93, 72, 0.15);
+  
+  --shadow-sm: 2px 2px 0px 0px var(--border-strong);
+  --shadow-md: 4px 4px 0px 0px var(--border-strong);
+  --shadow-lg: 6px 6px 0px 0px var(--border-strong);
+}
+
 body {
-  background-color: var(--bauhaus-white);
-  color: var(--bauhaus-black);
-  font-family: 'Jost', sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
+}
+
+/* Touch Targets */
+@media (pointer: coarse) { 
+  button, [role="button"], a { 
+    min-height: 44px; 
+    min-width: 44px; 
+  } 
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 /* ── Bold Bauhaus Utilities ─────────────────────────────────────────────── */
@@ -31,96 +121,40 @@ body {
 }
 
 .bauhaus-btn {
-  background: var(--bauhaus-black);
-  color: var(--bauhaus-white);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  border: 4px solid var(--bauhaus-black);
+  border: 4px solid var(--border-strong);
   border-radius: 0;
   transition: all 0.2s ease;
-  box-shadow: 6px 6px 0px 0px var(--bauhaus-black);
+  box-shadow: var(--shadow-lg);
+  padding: 0.5rem 1rem;
 }
 
 .bauhaus-btn:hover {
-  background: var(--bauhaus-yellow);
-  color: var(--bauhaus-black);
+  background: var(--warning);
+  color: #1A1A1A;
   transform: translate(2px, 2px);
-  box-shadow: 4px 4px 0px 0px var(--bauhaus-black);
+  box-shadow: var(--shadow-md);
 }
 
 .bauhaus-btn:active {
   transform: translate(6px, 6px);
-  box-shadow: 0px 0px 0px 0px var(--bauhaus-black);
+  box-shadow: none;
 }
 
 .bauhaus-btn.primary {
-  background: var(--bauhaus-red);
-  color: var(--bauhaus-white);
+  background: var(--accent);
+  color: #F4F4F4;
 }
 
 .bauhaus-btn.primary:hover {
-  background: var(--bauhaus-blue);
-  color: var(--bauhaus-white);
+  background: var(--accent-hover);
+  color: #F4F4F4;
 }
 
-/* Markdown Rendering Styles (Bold Bauhaus) */
-.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
-  color: var(--bauhaus-black);
-  font-weight: 900;
-  text-transform: uppercase;
-  margin-top: 1.5em;
-  margin-bottom: 0.75em;
-}
-.markdown-body h1 { font-size: 1.5em; border-bottom: 6px solid var(--bauhaus-black); padding-bottom: 0.2em; display: inline-block; }
-.markdown-body h2 { font-size: 1.25em; border-bottom: 4px solid var(--bauhaus-black); display: inline-block; padding-bottom: 0.1em; }
-.markdown-body p { margin-bottom: 1em; line-height: 1.6; font-weight: 500; font-size: 1.1em; }
-.markdown-body ul { list-style-type: square; padding-left: 1.5em; margin-bottom: 1em; }
-.markdown-body ol { list-style-type: decimal; padding-left: 1.5em; margin-bottom: 1em; }
-.markdown-body li { margin-bottom: 0.25em; font-weight: 500; }
-.markdown-body code {
-  background: var(--bauhaus-yellow);
-  padding: 0.2em 0.4em;
-  font-family: monospace;
-  font-size: 0.9em;
-  color: var(--bauhaus-black);
-  font-weight: bold;
-  border: 2px solid var(--bauhaus-black);
-}
-.markdown-body pre {
-  background: var(--bauhaus-black);
-  padding: 1.5em;
-  border-radius: 0;
-  overflow-x: auto;
-  border: 4px solid var(--bauhaus-black);
-  margin-bottom: 1.5em;
-}
-.markdown-body pre code {
-  background: transparent;
-  padding: 0;
-  color: var(--bauhaus-white);
-  font-weight: normal;
-  border: none;
-}
-.markdown-body table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 1.5em;
-  border: 4px solid var(--bauhaus-black);
-}
-.markdown-body th, .markdown-body td {
-  border: 3px solid var(--bauhaus-black);
-  padding: 12px 16px;
-  text-align: left;
-  font-weight: 700;
-}
-.markdown-body th { background: var(--bauhaus-blue); color: var(--bauhaus-white); text-transform: uppercase; }
-.markdown-body blockquote {
-  border-left: 8px solid var(--bauhaus-red);
-  padding-left: 1.5em;
-  color: var(--bauhaus-black);
-  margin: 0 0 1.5em 0;
-  font-weight: 700;
-  background: var(--bauhaus-gray);
-  padding: 1em;
+[data-theme="dark"] .invert-pdf-dark {
+  filter: invert(1) hue-rotate(180deg);
 }

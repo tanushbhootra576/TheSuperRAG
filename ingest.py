@@ -16,8 +16,6 @@ import os
 from typing import List, Optional, Callable
 
 from dotenv import load_dotenv
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import (
@@ -26,13 +24,15 @@ from qdrant_client.models import (
     SparseVectorParams,
     SparseIndexParams,
 )
+from loaders import DocumentLoader
+from chunker import Chunker, ChunkingStrategy
+from database import SessionLocal, GraphNode, GraphEdge, DocumentRecord, ChunkLocation, ParentChunk
 import fitz  # PyMuPDF
 import base64
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from langchain_core.documents import Document
 from pydantic import BaseModel, Field
-from database import SessionLocal, GraphNode, GraphEdge
 
 load_dotenv()
 
@@ -161,16 +161,18 @@ class DocumentStore:
             )
 
     def _auto_index_folder(self, on_progress: Optional[Callable] = None):
-        """Index all PDFs in folder_path that are not yet in the collection."""
+        """Index all supported files in folder_path that are not yet in the collection."""
         already_indexed = set(self.get_indexed_files())
-        pdf_files = [
+        supported_exts = {".pdf", ".docx", ".txt", ".md", ".csv", ".xlsx", ".pptx", ".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
+        
+        all_files = [
             f for f in os.listdir(self.folder_path)
-            if f.lower().endswith(".pdf")
+            if os.path.splitext(f.lower())[1] in supported_exts
         ]
-        new_files = [f for f in pdf_files if f not in already_indexed]
+        new_files = [f for f in all_files if f not in already_indexed]
 
         if new_files:
-            print(f"  [>] Auto-indexing {len(new_files)} new PDF(s)...")
+            print(f"  [>] Auto-indexing {len(new_files)} new file(s)...")
             for file_name in new_files:
                 chunks = self.index_file(
                     os.path.join(self.folder_path, file_name), file_name
@@ -181,8 +183,8 @@ class DocumentStore:
                         "file": file_name,
                         "chunks": chunks
                     })
-        elif not pdf_files:
-            print("  [!] No PDFs found in DATA/. Add PDFs then call /init.")
+        elif not all_files:
+            print("  [!] No supported documents found in DATA/. Add files then call /init.")
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -209,7 +211,7 @@ class DocumentStore:
             print(f"[DocumentStore] get_indexed_files error: {e}")
             return []
 
-    def index_file(self, file_path: str, file_name: str) -> int:
+    def index_file(self, file_path: str, file_name: str, strategy: Optional[str] = None, tags: Optional[List[str]] = None, author: Optional[str] = None, session_id: Optional[str] = None) -> int:
         """
         Parse a PDF and upsert its chunks into the collection.
 
@@ -223,19 +225,55 @@ class DocumentStore:
 
         try:
             print(f"  [>] Parsing: {file_name}")
-            # PyPDFLoader: lightweight, uses pypdf, gives page_number natively
-            loader = PyPDFLoader(file_path)
-            raw_docs = loader.load()
+            raw_docs = DocumentLoader.load(file_path)
 
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=CHUNK_SIZE,
-                chunk_overlap=CHUNK_OVERLAP,
-            )
-            chunks = splitter.split_documents(raw_docs)
+            for doc in raw_docs:
+                if tags:
+                    doc.metadata["tags"] = tags
+                if author:
+                    doc.metadata["author"] = author
+                if session_id:
+                    doc.metadata["session_id"] = session_id
+
+            chunker = Chunker()
+            chunks = chunker.chunk(raw_docs, strategy)
+            import hashlib
+            for c in chunks:
+                c.metadata['chunk_hash'] = hashlib.sha256(c.page_content.encode('utf-8')).hexdigest()
 
             if not chunks:
                 print(f"  [!] No content extracted from '{file_name}'.")
                 return 0
+                
+            db = SessionLocal()
+            try:
+                if not strategy:
+                    file_type = raw_docs[0].metadata.get("file_type", "txt") if raw_docs else "txt"
+                    actual_strat = chunker.auto_select_strategy(file_type).value
+                else:
+                    actual_strat = strategy
+                
+                doc_record = db.query(DocumentRecord).filter(DocumentRecord.id == file_name).first()
+                if not doc_record:
+                    doc_record = DocumentRecord(
+                        id=file_name, 
+                        chunking_strategy=actual_strat,
+                        tags=tags or [],
+                        author=author,
+                        file_type=file_type
+                    )
+                    db.add(doc_record)
+                else:
+                    doc_record.chunking_strategy = actual_strat
+                    if tags: doc_record.tags = tags
+                    if author: doc_record.author = author
+                    doc_record.file_type = file_type
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                print(f"  [!] DB Error tracking document: {e}")
+            finally:
+                db.close()
 
             # ── Vision / Multi-Modal Extraction ──────────────────────────────
             print(f"  [>] Extracting images/charts using Vision Model for: {file_name}")
@@ -248,7 +286,6 @@ class DocumentStore:
                 print(f"  [!] Vision extraction skipped/failed: {e}")
 
             for chunk in chunks:
-                # PyPDFLoader gives page_number as doc.metadata['page'] (0-indexed)
                 page = chunk.metadata.get(
                     "page_number",
                     chunk.metadata.get("page", "N/A")
@@ -267,6 +304,44 @@ class DocumentStore:
             # ── Add to Qdrant ────────────────────────────────────────────────
             self._vector_store.add_documents(chunks)
             print(f"  [OK] Indexed {len(chunks)} chunks from '{file_name}'")
+            
+            # ── Chunk-to-Page Mapping (P3.2) ─────────────────────────────────
+            if file_path.lower().endswith(".pdf"):
+                print(f"  [>] Mapping PyMuPDF bounding boxes for citations...")
+                try:
+                    import fitz
+                    import uuid
+                    db = SessionLocal()
+                    
+                    pdf_doc = fitz.open(str(file_path))
+                    for chunk in chunks:
+                        chunk_id = chunk.metadata.get("chunk_id")
+                        if not chunk_id: continue
+                        
+                        page_num = chunk.metadata.get("page_number", 1)
+                        if 1 <= page_num <= len(pdf_doc):
+                            page = pdf_doc[page_num - 1]
+                            snippet = chunk.page_content[:100].replace("\n", " ")
+                            rects = page.search_for(snippet)
+                            
+                            bbox = None
+                            if rects:
+                                r = rects[0]
+                                bbox = [r.x0, r.y0, r.x1, r.y1]
+                                
+                            loc = ChunkLocation(
+                                id=str(uuid.uuid4()),
+                                chunk_id=chunk_id,
+                                doc_id=file_name,
+                                page_number=page_num,
+                                bbox=bbox
+                            )
+                            db.add(loc)
+                    db.commit()
+                    db.close()
+                except Exception as e:
+                    print(f"  [!] Failed to map chunk locations: {e}")
+                    
             return len(chunks)
 
         except Exception as e:
@@ -298,30 +373,128 @@ class DocumentStore:
             print(f"  [X] Error deleting '{file_name}': {e}")
             return False
 
+    
+    def smart_reindex(self, file_name: str, new_path: str, old_path: Optional[str] = None, strategy: Optional[str] = None, tags: Optional[List[str]] = None, author: Optional[str] = None, session_id: Optional[str] = None) -> dict:
+        import hashlib
+        
+        def _get_hash(text):
+            return hashlib.sha256(text.encode('utf-8')).hexdigest()
+            
+        print(f"  [>] Smart Reindex: {file_name}")
+        new_docs = DocumentLoader.load(new_path)
+        for doc in new_docs:
+            if tags: doc.metadata["tags"] = tags
+            if author: doc.metadata["author"] = author
+            if session_id: doc.metadata["session_id"] = session_id
+            
+        chunker = Chunker()
+        actual_strat = strategy
+        if not actual_strat:
+            ext = os.path.splitext(file_name.lower())[1]
+            if ext == ".pdf": actual_strat = "sliding_window"
+            elif ext in [".md", ".docx", ".txt"]: actual_strat = "semantic"
+            else: actual_strat = "recursive"
+            
+        new_chunks = chunker.chunk(new_docs, actual_strat)
+        new_hashed = {}
+        for c in new_chunks:
+            chash = _get_hash(c.page_content)
+            c.metadata["chunk_hash"] = chash
+            new_hashed[chash] = c
+            
+        old_hashed = {}
+        if old_path and os.path.exists(old_path):
+            old_docs = DocumentLoader.load(old_path)
+            old_chunks = chunker.chunk(old_docs, actual_strat)
+            for c in old_chunks:
+                chash = _get_hash(c.page_content)
+                old_hashed[chash] = c
+                
+        added_hashes = set(new_hashed.keys()) - set(old_hashed.keys())
+        removed_hashes = set(old_hashed.keys()) - set(new_hashed.keys())
+        unchanged_hashes = set(new_hashed.keys()).intersection(set(old_hashed.keys()))
+        
+        print(f"      - Unchanged: {len(unchanged_hashes)}")
+        print(f"      - Added: {len(added_hashes)}")
+        print(f"      - Removed: {len(removed_hashes)}")
+        
+        # Delete removed chunks from Qdrant
+        if removed_hashes:
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="metadata.source_file",
+                                match=models.MatchValue(value=file_name)
+                            ),
+                            models.FieldCondition(
+                                key="metadata.chunk_hash",
+                                match=models.MatchAny(any=list(removed_hashes))
+                            )
+                        ]
+                    )
+                )
+            )
+            
+        # Add new chunks to Qdrant
+        if added_hashes:
+            docs_to_add = [new_hashed[h] for h in added_hashes]
+            db = SessionLocal()
+            try:
+                for c in docs_to_add:
+                    pid = c.metadata.get("parent_id")
+                    if pid and "parent_content" in c.metadata:
+                        pcontent = c.metadata.pop("parent_content")
+                        if not db.query(ParentChunk).filter(ParentChunk.id == pid).first():
+                            db.add(ParentChunk(id=pid, content=pcontent, source_file=file_name))
+                db.commit()
+            except:
+                db.rollback()
+            finally:
+                db.close()
+            
+            self._vector_store.add_documents(docs_to_add)
+            self._extract_and_save_graph(docs_to_add, file_name)
+            
+        # Always make sure to update DocumentRecord
+        db = SessionLocal()
+        try:
+            rec = db.query(DocumentRecord).filter(DocumentRecord.id == file_name).first()
+            if not rec:
+                db.add(DocumentRecord(
+                    id=file_name, chunking_strategy=actual_strat,
+                    tags=tags or [], author=author,
+                    file_type=new_docs[0].metadata.get("file_type", "") if new_docs else ""
+                ))
+            else:
+                rec.chunking_strategy = actual_strat
+                if tags: rec.tags = tags
+                if author: rec.author = author
+            db.commit()
+        finally:
+            db.close()
+            
+        return {
+            "unchanged": len(unchanged_hashes),
+            "added": len(added_hashes),
+            "removed": len(removed_hashes),
+            "total_now": len(new_hashed)
+        }
+
     def get_retriever(
         self,
-        selected_docs: Optional[List[str]] = None,
+        qdrant_filter: Optional[models.Filter] = None,
         k: int = 10,
     ):
         """
         Return a LangChain retriever.
 
         Args:
-            selected_docs: If provided, retrieval is filtered to these files only.
-                           Pass None or [] to search the entire collection.
+            qdrant_filter: Pre-built Qdrant Filter for scoping retrieval.
             k:             Number of candidates to retrieve before re-ranking.
         """
-        qdrant_filter = None
-        if selected_docs:
-            qdrant_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="metadata.source_file",
-                        match=models.MatchAny(any=selected_docs),
-                    )
-                ]
-            )
-
         search_kwargs: dict = {"k": k}
         if qdrant_filter:
             search_kwargs["filter"] = qdrant_filter
@@ -402,6 +575,9 @@ class DocumentStore:
         except Exception:
             return []
 
+        if not str(file_path).lower().endswith(".pdf"):
+            return []
+            
         doc = fitz.open(file_path)
         image_docs = []
         

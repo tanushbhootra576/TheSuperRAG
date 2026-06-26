@@ -51,13 +51,13 @@ export default function BauhausExtendedLandingPage() {
           <div className="absolute top-12 left-12 w-16 h-16 bg-[#FFD230] rounded-full border-4 border-[#111111] hidden lg:block"></div>
           
           <div className="mt-12 lg:mt-16 z-10 py-4">
-            <h1 className="text-6xl md:text-7xl xl:text-[7rem] font-black leading-tight uppercase tracking-tighter mb-8 text-[#111111]">
+            <h1 className="text-5xl md:text-7xl xl:text-[7rem] font-black leading-tight uppercase tracking-tighter mb-8 text-[#111111]">
               Form<br/>
               <span className="text-[#2563EB]">Follows</span><br/>
               Data.
             </h1>
             
-            <p className="text-lg lg:text-xl font-bold max-w-lg mb-12 leading-snug border-l-8 border-[#EF4444] pl-6 py-2 text-[#111111]">
+            <p className="text-base md:text-lg lg:text-xl font-bold max-w-lg mb-12 leading-snug border-l-8 border-[#EF4444] pl-6 py-2 text-[#111111]">
               The next generation Retrieval-Augmented Generation platform. Pure function. Pure intelligence.
             </p>
             
@@ -191,7 +191,7 @@ export default function BauhausExtendedLandingPage() {
       */}
       <footer className="bg-white">
         <div className="p-12 lg:p-24 text-center border-b-4 border-[#111111] bg-[#F9FAFB]">
-          <h2 className="text-5xl lg:text-7xl font-black uppercase tracking-tighter mb-12">Ready to Upgrade?</h2>
+          <h2 className="text-4xl md:text-5xl lg:text-7xl font-black uppercase tracking-tighter mb-12">Ready to Upgrade?</h2>
           <Link href="/chat" className="inline-block bg-[#2563EB] text-white text-xl lg:text-2xl font-black uppercase tracking-widest px-12 py-6 border-4 border-[#111111] hover:bg-[#FFD230] hover:text-[#111111] hover:-translate-y-2 hover:translate-x-[-6px] hover:shadow-[12px_12px_0px_#111111] transition-all">
             Launch TheSuperRAG
           </Link>

@@ -33,7 +33,6 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, ChatSession, ChatMessage
 from graph import RAGGraph
 from ingest import DocumentStore
-from indexer import AutoIndexer
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DATA_FOLDER = "DATA"
@@ -60,7 +59,6 @@ app.add_middleware(
 # ── Global State ──────────────────────────────────────────────────────────────
 doc_store: DocumentStore = None
 rag_system: RAGGraph = None
-auto_indexer: AutoIndexer = None
 initialized: bool = False
 _init_error: str = None
 _init_in_progress: bool = False
@@ -96,9 +94,7 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global auto_indexer
-    if auto_indexer:
-        auto_indexer.stop()
+    pass
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 import datetime
@@ -140,7 +136,7 @@ def _push_event(event: dict):
 
 def _do_init():
     """Heavy init work — runs in a thread pool so the event loop stays free."""
-    global doc_store, rag_system, auto_indexer, initialized, _init_error, _init_in_progress
+    global doc_store, rag_system, initialized, _init_error, _init_in_progress
     with _init_lock:
         if initialized:
             return
@@ -149,11 +145,8 @@ def _do_init():
         try:
             ds = DocumentStore(folder_path=DATA_FOLDER, collection_name=COLLECTION_NAME)
             rg = RAGGraph(doc_store=ds)
-            ai = AutoIndexer(folder_path=DATA_FOLDER, doc_store=ds, on_indexed=_push_event)
-            ai.start()
             doc_store = ds
             rag_system = rg
-            auto_indexer = ai
             initialized = True
         except Exception as e:
             _init_error = str(e)

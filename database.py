@@ -50,4 +50,26 @@ class GraphEdge(Base):
     relation = Column(String)             # e.g., "REGULATES", "BELONGS_TO"
     source_file = Column(String)
 
+class DocumentRecord(Base):
+    __tablename__ = "documents"
+    id = Column(String, primary_key=True)
+    chunking_strategy = Column(String)
+    tags = Column(JSON)
+    author = Column(String)
+    file_type = Column(String)
+
+class ChunkLocation(Base):
+    __tablename__ = "chunk_locations"
+    id = Column(String, primary_key=True)
+    chunk_id = Column(String)
+    doc_id = Column(String)
+    page_number = Column(Integer)
+    bbox = Column(JSON)
+
+class ParentChunk(Base):
+    __tablename__ = "parent_chunks"
+    id = Column(String, primary_key=True)
+    content = Column(String)
+    source_file = Column(String)
+
 Base.metadata.create_all(bind=engine)

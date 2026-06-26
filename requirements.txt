@@ -5,7 +5,7 @@ langchain-huggingface
 langchain-groq
 langchain-qdrant
 langchain-text-splitters
-langgraph
+langchain-experimental
 pypdf
 python-dotenv
 qdrant-client[fastembed]
@@ -17,4 +17,12 @@ fastapi
 uvicorn[standard]
 python-multipart
 aiofiles
-watchdog
+python-docx
+openpyxl
+python-pptx
+youtube-transcript-api
+httpx
+beautifulsoup4
+pytesseract
+pillow
+scikit-learn

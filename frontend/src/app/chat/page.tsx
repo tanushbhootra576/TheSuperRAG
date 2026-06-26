@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Mic, Send, Copy, Share, Edit2, Trash2, Maximize2, Minimize2, Settings, FileText, UploadCloud, MessageSquare, Plus, ChevronDown, ChevronRight, Check } from 'lucide-react';
+import Link from 'next/link';
+import { Mic, Send, Copy, Share, Edit2, Trash2, Maximize2, Minimize2, Settings, FileText, UploadCloud, MessageSquare, Plus, ChevronDown, ChevronRight, Check, Menu, Clock, Network, Database, Home } from 'lucide-react';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -44,7 +45,7 @@ const confColor: Record<string, string> = {
 };
 
 // ── Main Component ────────────────────────────────────────────────────────────
-export default function Home() {
+export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
@@ -85,15 +86,88 @@ export default function Home() {
   const [editingTitle, setEditingTitle] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   
-  //Settings state
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  //Settings and UI modal states
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [llmModel, setLlmModel] = useState('llama-3.1-8b-instant');
-  const [temperature, setTemperature] = useState(0.0);
-  const [useCrossEncoder, setUseCrossEncoder] = useState(true);
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isDocsOpen, setIsDocsOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const toastCounter = useRef(0);
+
+
+  // ── Voice Input & TTS (P3.4) ──────────────────────────────────────────────
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const handleStartRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append('file', audioBlob, 'recording.webm');
+        
+        try {
+          addToast('Transcribing audio...', 'info');
+          const res = await fetch(API + '/api/voice/transcribe', {
+            method: 'POST',
+            body: formData,
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setInput((prev) => prev + (prev ? ' ' : '') + data.transcript);
+            addToast(`Transcribed (Confidence: ${data.confidence})`, 'success');
+          } else {
+            addToast('Transcription failed', 'error');
+          }
+        } catch (err) {
+          addToast('Transcription error', 'error');
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      addToast('Microphone access denied or error', 'error');
+    }
+  };
+
+  const handleStopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+    }
+  };
+
+  const playTTS = async (text: string) => {
+    try {
+      addToast('Synthesizing speech...', 'info');
+      const res = await fetch(API + '/api/voice/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: 'neutral', speed: 1.0 }),
+      });
+      if (!res.ok) throw new Error('TTS failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.play();
+    } catch (err) {
+      addToast('Could not play audio', 'error');
+    }
+  };
 
   // ── Utilities ──────────────────────────────────────────────────────────────
 
@@ -188,10 +262,10 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (activeTab === 'graph') {
+    if (isGraphExpanded) {
       fetchGraph();
     }
-  }, [activeTab]);
+  }, [isGraphExpanded]);
 
 
   // ── Effects ────────────────────────────────────────────────────────────────
@@ -240,7 +314,7 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // SSE: auto-indexing notifications from watchdog
+  // SSE: auto-indexing notifications from POST /upload
   useEffect(() => {
     const es = new EventSource(`${API}/events`);
     es.onmessage = (e) => {
@@ -322,9 +396,9 @@ export default function Home() {
           history: historyPayload,
           selected_documents: selectedDocs,
           session_id: sessionId,
-          llm_model: llmModel,
-          temperature: temperature,
-          use_cross_encoder: useCrossEncoder,
+          llm_model: 'llama-3.1-8b-instant',
+          temperature: 0.0,
+          use_cross_encoder: true,
         }),
       });
 
@@ -353,25 +427,25 @@ export default function Home() {
             } else if (parsed.type === 'token') {
               setMessages((prev) => {
                 const newMsgs = [...prev];
-                const last = newMsgs[newMsgs.length - 1];
+                const last = { ...newMsgs[newMsgs.length - 1] };
                 if (last.role === 'assistant') {
                   last.content += parsed.content;
                 }
+                newMsgs[newMsgs.length - 1] = last;
                 return newMsgs;
               });
             } else if (parsed.type === 'final') {
               setMessages((prev) => {
                 const newMsgs = [...prev];
-                const last = newMsgs[newMsgs.length - 1];
+                const last = { ...newMsgs[newMsgs.length - 1] };
                 if (last.role === 'assistant') {
-                  // We already appended the text via tokens, just update docs/confidence
-                  // Wait! If there were no tokens (e.g. from a router node), we might need to set the content.
                   if (parsed.message && !last.content) {
                     last.content = parsed.message;
                   }
                   last.docs = parsed.docs || [];
                   last.confidence = parsed.confidence;
                 }
+                newMsgs[newMsgs.length - 1] = last;
                 return newMsgs;
               });
               setLiveStatus(null);
@@ -417,19 +491,20 @@ export default function Home() {
     setDeletingDoc(null);
   };
 
-  // Upload handlers
   const uploadFiles = async (files: FileList | File[]) => {
-    const pdfs = Array.from(files).filter((f) => f.name.toLowerCase().endsWith('.pdf'));
-    if (!pdfs.length) {
-      addToast('Please select PDF files only.', 'error');
+    const supportedExts = ['.pdf', '.docx', '.txt', '.md', '.csv', '.xlsx', '.pptx', '.png', '.jpg', '.jpeg', '.bmp', '.tiff'];
+    const validFiles = Array.from(files).filter((f) => supportedExts.some(ext => f.name.toLowerCase().endsWith(ext)));
+    if (!validFiles.length) {
+      addToast('Please select supported files only.', 'error');
       return;
     }
     setUploading(true);
     let uploaded = 0;
-    for (const file of pdfs) {
+    for (const file of validFiles) {
       try {
         const fd = new FormData();
         fd.append('file', file);
+        if (sessionId) fd.append('session_id', sessionId);
         const res = await fetch(`${API}/upload`, { method: 'POST', body: fd });
         if (res.ok) {
           uploaded++;
@@ -438,7 +513,7 @@ export default function Home() {
       } catch {}
     }
     setUploading(false);
-    if (uploaded > 0) addToast(`${uploaded} PDF(s) uploaded and indexed.`, 'success');
+    if (uploaded > 0) addToast(`${uploaded} file(s) uploaded and indexed.`, 'success');
     else addToast('Upload failed. Is the server running?', 'error');
   };
 
@@ -482,81 +557,213 @@ export default function Home() {
         ))}
       </div>
 
-      {/* ──Settings Modal ────────────────────────────────────────────────── */}
-      {isSettingsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="glass-panel w-[400px] rounded-2xl border border-slate-700 p-6 shadow-2xl relative">
-            <h3 className="text-lg font-bold text-slate-100 mb-4">ModelSettings</h3>
+      {/* ──Upload Modal ────────────────────────────────────────────────── */}
+      {isUploadOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setIsUploadOpen(false)}>
+          <div className="w-full max-w-[500px] bg-white border-[3px] border-[#111111] p-6 shadow-[8px_8px_0px_0px_rgba(17,17,17,1)] relative" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-black text-[#111111] uppercase tracking-tight flex items-center gap-2">
+                <UploadCloud size={24} className="text-[#2563EB]"/> Ingest Data
+              </h3>
+              <button onClick={() => setIsUploadOpen(false)} className="text-[#111111] hover:text-[#EF4444] transition-colors"><Plus className="w-8 h-8 rotate-45" strokeWidth={3} /></button>
+            </div>
             
-            <div className="space-y-5">
-              <div>
-                <label className="text-xs font-semibold text-gray-500 mb-2 block">LLM Provider</label>
-                <select
-                  value={llmModel}
-                  onChange={(e) => setLlmModel(e.target.value)}
-                  className="w-full bg-slate-900/60 border border-slate-700/60 text-slate-200 rounded-lg p-2.5 text-sm focus:border-sky-500 focus:outline-none"
-                >
-                  <option value="llama-3.1-8b-instant">Llama 3.1 8B (Fast)</option>
-                  <option value="llama-3.1-70b-versatile">Llama 3.1 70B (Smart)</option>
-                  <option value="mixtral-8x7b-32768">Mixtral 8x7b</option>
-                  <option value="gemma2-9b-it">Gemma 2 9B</option>
-                </select>
-              </div>
-
-              <div>
-                <div className="flex justify-between items-center mb-2">
-                  <label className="text-xs font-semibold text-gray-500">Temperature (Creativity)</label>
-                  <span className="text-xs text-[#111111] font-medium">{temperature.toFixed(1)}</span>
-                </div>
+            <div className="flex flex-col gap-6">
+              <div className="flex gap-2">
                 <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={temperature}
-                  onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                  className="w-full accent-sky-500"
+                  type="text"
+                  placeholder="Or paste a URL (Web page or YouTube)"
+                  className="flex-1 px-4 py-3 text-sm bg-white border-[2px] border-[#111111] text-[#111111] focus:outline-none focus:border-[#2563EB] focus:ring-0 placeholder:text-gray-400 font-medium"
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter') {
+                      const url = e.currentTarget.value.trim();
+                      if (!url) return;
+                      e.currentTarget.value = '';
+                      setUploading(true);
+                      try {
+                        const fd = new FormData();
+                        fd.append('url', url);
+                        if (sessionId) fd.append('session_id', sessionId);
+                        const res = await fetch(`${API}/upload`, { method: 'POST', body: fd });
+                        if (res.ok) {
+                          addToast(`URL indexed successfully.`, 'success');
+                          fetchDocuments();
+                        } else {
+                          addToast(`Failed to index URL.`, 'error');
+                        }
+                      } catch {
+                        addToast(`Failed to index URL.`, 'error');
+                      }
+                      setUploading(false);
+                    }
+                  }}
+                />
+              </div>
+              
+              <div
+                id="upload-dropzone"
+                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`
+                  relative border-[3px] border-dashed border-[#111111] p-10 text-center cursor-pointer
+                  transition-all duration-200 select-none bg-gray-50
+                  ${isDragging
+                    ? 'border-[#2563EB] bg-[#2563EB]/10 scale-[1.02]'
+                    : 'hover:border-[#2563EB] hover:bg-[#FFD230]/10'
+                  }
+                  ${uploading ? 'pointer-events-none opacity-60' : ''}
+                `}
+              >
+                {uploading ? (
+                  <div className="flex flex-col items-center gap-4">
+                    <svg className="animate-spin h-10 w-10 text-[#2563EB]" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    <p className="text-sm text-[#111111] font-bold uppercase tracking-widest">Uploading & indexing…</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-4">
+                    <div className={`transition-transform duration-200 ${isDragging ? 'scale-110 text-[#2563EB]' : 'text-[#111111]'}`}>
+                      <UploadCloud className="h-12 w-12" strokeWidth={2} />
+                    </div>
+                    <div>
+                      <p className="text-base font-black text-[#111111] uppercase">
+                        {isDragging ? 'Drop to upload' : 'Drop files here or click to browse'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-2 font-medium">PDF, DOCX, TXT, CSV, PPTX, Images</p>
+                    </div>
+                  </div>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.pptx,.png,.jpg,.jpeg,.bmp,.tiff"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => e.target.files && uploadFiles(e.target.files)}
                 />
               </div>
 
-              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-900/40 border border-slate-800">
-                <div>
-                  <p className="text-sm font-semibold text-slate-200">Cross-Encoder Re-ranking</p>
-                  <p className="text-[10px] text-gray-500">Improves accuracy, slightly slower.</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="sr-only peer"
-                    checked={useCrossEncoder}
-                    onChange={(e) => setUseCrossEncoder(e.target.checked)}
-                  />
-                  <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
-                </label>
-              </div>
+              <p className="text-[11px] text-gray-500 font-medium text-center">
+                 You can also drop files directly into the DATA/ folder — they'll be auto-indexed instantly.
+              </p>
             </div>
-
-            <button
-              onClick={() => setIsSettingsOpen(false)}
-              className="mt-6 w-full bg-slate-100 text-slate-900 hover:bg-white font-semibold py-2.5 rounded-lg transition-colors"
-            >
-              Done
-            </button>
           </div>
         </div>
       )}
+
+      {/* ──Docs Library Modal ────────────────────────────────────────────────── */}
+      {isDocsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setIsDocsOpen(false)}>
+          <div className="w-full max-w-[600px] max-h-[80vh] flex flex-col bg-white border-[3px] border-[#111111] p-6 shadow-[8px_8px_0px_0px_rgba(17,17,17,1)] relative" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6 shrink-0">
+              <h3 className="text-xl font-black text-[#111111] uppercase tracking-tight flex items-center gap-2">
+                <Database size={24} className="text-[#FFD230]" strokeWidth={2.5}/> Docs Library
+              </h3>
+              <button onClick={() => setIsDocsOpen(false)} className="text-[#111111] hover:text-[#EF4444] transition-colors"><Plus className="w-8 h-8 rotate-45" strokeWidth={3}/></button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto min-h-0 bg-white border-[2px] border-[#111111]">
+              <div className="px-4 py-3 border-b-[2px] border-[#111111] flex items-center justify-between sticky top-0 bg-gray-50 z-10">
+                <p className="text-[11px] font-black text-[#111111] uppercase tracking-widest">
+                  Indexed Documents
+                </p>
+                {selectedDocs.length > 0 && (
+                  <button
+                    onClick={() => setSelectedDocs([])}
+                    className="text-[11px] text-[#2563EB] hover:text-blue-700 font-black uppercase transition-colors"
+                  >
+                    Clear filter
+                  </button>
+                )}
+              </div>
+
+              {documents.length === 0 ? (
+                <p className="p-8 text-sm text-gray-500 font-medium text-center">
+                  No documents indexed. Upload files to get started.
+                </p>
+              ) : (
+                <ul className="divide-y-[2px] divide-[#111111]">
+                  {documents.map((doc) => {
+                    const isSelected = selectedDocs.includes(doc);
+                    const isDeleting = deletingDoc === doc;
+                    return (
+                      <li
+                        key={doc}
+                        className={`flex items-center gap-3 px-4 py-3 transition-colors
+                          ${isSelected ? 'bg-[#FFD230]/20' : 'hover:bg-gray-50'}`}
+                      >
+                        {/* Checkbox / selection */}
+                        <button
+                          onClick={() => toggleDocSelection(doc)}
+                          className={`w-5 h-5 border-[2px] flex items-center justify-center shrink-0 transition-all
+                            ${isSelected ? 'bg-[#2563EB] border-[#2563EB]' : 'bg-white border-[#111111] hover:border-[#2563EB]'
+                            }`}
+                        >
+                          {isSelected && <Check className="w-4 h-4 text-white" strokeWidth={4} />}
+                        </button>
+
+                        {/* Filename */}
+                        <span
+                          className={`flex-1 text-sm truncate cursor-pointer transition-colors
+                            ${isSelected ? 'text-[#111111] font-black' : 'text-gray-700 font-semibold'}`}
+                          onClick={() => toggleDocSelection(doc)}
+                          title={doc}
+                        >
+                          {doc}
+                        </span>
+
+                        {/* Delete */}
+                        <button
+                          onClick={() => handleDeleteDoc(doc)}
+                          disabled={isDeleting}
+                          className="text-[#111111] hover:text-[#EF4444] transition-colors shrink-0 disabled:opacity-40 p-1"
+                          title={`Delete ${doc}`}
+                        >
+                          {isDeleting ? (
+                            <svg className="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                            </svg>
+                          ) : (
+                            <Trash2 className="w-5 h-5" strokeWidth={2.5}/>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+            
+            {/* Search scope indicator */}
+            {documents.length > 0 && (
+              <div className="mt-5 shrink-0 flex items-center justify-between">
+                <p className="text-xs text-gray-600 font-medium">
+                   Searching scope: <span className="text-[#111111] font-black uppercase">{searchScopeLabel}</span>
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ──Settings Modal Removed ────────────────────────────────────────── */}
       {/* Fullscreen Graph Overlay */}
       {isGraphExpanded && (
         <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center backdrop-blur-sm">
           <div className="absolute top-6 right-6 z-50">
             <button
               onClick={() => setIsGraphExpanded(false)}
-              className="p-2 bg-slate-800/80 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
+              className="p-3 bg-white text-[#111111] border-[3px] border-[#111111] shadow-[4px_4px_0px_0px_rgba(17,17,17,1)] active:shadow-none active:translate-y-1 active:translate-x-1 hover:bg-[#EF4444] hover:text-white transition-all"
             >
-              <Minimize2 size={20} />
+              <Minimize2 size={24} strokeWidth={3} />
             </button>
           </div>
-          <div className="w-[90vw] h-[90vh] bg-slate-900/60 rounded-2xl border border-slate-800/80 overflow-hidden relative shadow-2xl">
+          <div className="w-[90vw] h-[90vh] bg-white border-[4px] border-[#111111] overflow-hidden relative shadow-[16px_16px_0px_0px_rgba(17,17,17,1)]">
             {graphData.nodes.length > 0 ? (
               <ForceGraph2D
                 graphData={graphData}
@@ -566,12 +773,12 @@ export default function Home() {
                 nodeLabel="id"
                 linkDirectionalArrowLength={4}
                 linkDirectionalArrowRelPos={1}
-                linkColor={() => 'rgba(255,255,255,0.3)'}
-                backgroundColor="rgba(0,0,0,0)"
+                linkColor={() => '#111111'}
+                backgroundColor="#ffffff"
               />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center">
-                <p className="text-gray-500 font-medium">No graph data extracted.</p>
+                <p className="text-[#111111] font-black uppercase tracking-widest text-xl">No graph data extracted.</p>
               </div>
             )}
           </div>
@@ -582,7 +789,7 @@ export default function Home() {
       {isSidebarOpen && <div className="fixed inset-0 bg-black/60 z-30 md:hidden" onClick={() => setIsSidebarOpen(false)} />}
 
       {/* ── Sidebar ───────────────────────────────────────────────────────── */}
-      <aside className={`fixed md:static inset-y-0 left-0 w-[22%] bg-white border-r border-[#E5E7EB] flex flex-col z-40 transition-transform duration-300 ${isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}>
+      <aside className={`fixed md:static inset-y-0 left-0 w-80 max-w-[85vw] md:w-[22%] md:max-w-none bg-white border-r border-[#E5E7EB] flex flex-col z-40 transition-transform duration-300 ${isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}>
         {/* Gradient accent bar */}
         
 
@@ -652,255 +859,57 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Navigation Menu (Tabs) */}
+        {/* Permanent History Panel */}
         {isInitialized && (
-          <nav className="flex-1 px-6 mt-6 flex flex-col gap-2.5">
-            {(['documents', 'upload', 'history', 'graph'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`flex items-center gap-4 px-5 py-3.5 rounded-full font-medium text-[15px] transition-all capitalize
-                  ${activeTab === tab
-                    ? 'bg-[#EBF1FF] text-[#2563EB] shadow-sm'
-                    : 'text-[#111111] hover:bg-[#F3F4F6]'
-                  }`}
-              >
-                {tab === 'documents' ? <FileText size={18} /> : 
-                 tab === 'upload' ? <UploadCloud size={18} /> : 
-                 tab === 'history' ? <Copy size={18} /> : 
-                 <Share size={18} />} 
-                {tab === 'documents' ? 'Docs' : tab}
-              </button>
-            ))}
-            
-            <button 
-              onClick={() => setIsSettingsOpen(true)} 
-              className="flex items-center gap-4 px-5 py-3.5 mt-2 text-[#111111] hover:bg-[#F3F4F6] rounded-full font-medium text-[15px] transition-colors"
-            >
-              <Settings size={18} /> Settings
-            </button>
-          </nav>
-        )}
-{/* Document Manager */}
-        {isInitialized && activeTab === 'documents' && (
-          <div className="px-6 flex-1 overflow-y-auto pb-6">
-            <div className="rounded-xl border border-[#E5E7EB] overflow-hidden bg-[#F9FAFB]">
-              <div className="px-4 py-3 border-b border-[#E5E7EB] flex items-center justify-between bg-white">
-                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-                  Indexed Documents
-                </p>
-                {selectedDocs.length > 0 && (
-                  <button
-                    onClick={() => setSelectedDocs([])}
-                    className="text-[10px] text-[#2563EB] hover:text-blue-700 font-semibold"
-                  >
-                    Clear filter
-                  </button>
-                )}
-              </div>
-
-              {documents.length === 0 ? (
-                <p className="p-4 text-xs text-gray-500 text-center">
-                  No documents indexed. Upload PDFs to get started.
-                </p>
-              ) : (
-                <ul className="divide-y divide-[#E5E7EB]">
-                  {documents.map((doc) => {
-                    const isSelected = selectedDocs.includes(doc);
-                    const isDeleting = deletingDoc === doc;
-                    return (
-                      <li
-                        key={doc}
-                        className={`flex items-center gap-3 px-4 py-2.5 transition-colors
-                          ${isSelected ? 'bg-[#EBF1FF]' : 'hover:bg-white'}`}
-                      >
-                        {/* Checkbox / selection */}
-                        <button
-                          id={`doc-select-${doc}`}
-                          onClick={() => toggleDocSelection(doc)}
-                          className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-all
-                            ${isSelected ? 'bg-[#2563EB] border-[#2563EB]' : 'border-gray-300 hover:border-[#2563EB]'
-                            }`}
-                        >
-                          {isSelected && (
-                            <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 8">
-                              <path
-                                d="M1 4l3 3 5-6"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                            </svg>
-                          )}
-                        </button>
-
-                        {/* Filename */}
-                        <span
-                          className={`flex-1 text-xs truncate cursor-pointer transition-colors
-                            ${isSelected ? 'text-[#111111] font-semibold' : 'text-gray-600'}`}
-                          onClick={() => toggleDocSelection(doc)}
-                          title={doc}
-                        >
-                          {doc}
-                        </span>
-
-                        {/* Delete */}
-                        <button
-                          id={`doc-delete-${doc}`}
-                          onClick={() => handleDeleteDoc(doc)}
-                          disabled={isDeleting}
-                          className="text-gray-400 hover:text-red-500 transition-colors shrink-0 disabled:opacity-40"
-                          title={`Delete ${doc}`}
-                        >
-                          {isDeleting ? (
-                            <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                            </svg>
-                          ) : (
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-
-              {/* Search scope indicator */}
-              {documents.length > 0 && (
-                <div className="px-4 py-2.5 border-t border-[#E5E7EB] bg-white">
-                  <p className="text-[10px] text-gray-500">
-                     Searching: <span className="text-[#111111] font-medium">{searchScopeLabel}</span>
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Upload Panel */}
-        {isInitialized && activeTab === 'upload' && (
-          <div className="px-6 flex-1">
-            <div
-              id="upload-dropzone"
-              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`
-                relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer
-                transition-all duration-200 select-none
-                ${isDragging
-                  ? 'border-[#2563EB] bg-[#EBF1FF] scale-[1.02]'
-                  : 'border-gray-300 hover:border-[#2563EB] hover:bg-gray-50'
-                }
-                ${uploading ? 'pointer-events-none opacity-60' : ''}
-              `}
-            >
-              {uploading ? (
-                <div className="flex flex-col items-center gap-3">
-                  <svg className="animate-spin h-8 w-8 text-white" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                  <p className="text-sm text-[#111111] font-medium">Uploading & indexing…</p>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-3">
-                  <div className={`transition-transform duration-200 ${isDragging ? 'scale-110' : ''}`}>
-                    <svg className="h-10 w-10 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-300">
-                      {isDragging ? 'Drop to upload' : 'Drop PDFs here'}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">or click to browse</p>
-                  </div>
-                </div>
-              )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf"
-                multiple
-                className="hidden"
-                onChange={(e) => e.target.files && uploadFiles(e.target.files)}
-              />
-            </div>
-
-            <p className="text-[10px] text-slate-600 text-center mt-3">
-               You can also drop PDFs directly into the DATA/ folder — they&apos;ll be auto-indexed instantly.
+          <div className="px-6 flex-1 overflow-y-auto pb-6 mt-6">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
+              Recent Chats
             </p>
-          </div>
-        )}
-
-        {/* History Panel */}
-        {isInitialized && activeTab === 'history' && (
-          <div className="px-6 flex-1 overflow-y-auto pb-6">
             <button
               onClick={createSession}
-              className="w-full py-2 mb-3 rounded-lg text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white transition-colors"
+              className="w-full py-2.5 mb-4 rounded-xl text-[13px] font-semibold bg-[#111111] hover:bg-[#333333] text-white transition-all shadow-sm"
             >
               + New Chat
             </button>
             <div className="space-y-2">
               {sessions.map((s) => (
-                <button
+                <div
                   key={s.id}
-                  onClick={() => loadSession(s.id)}
-                  className={`w-full text-left p-3 rounded-xl border text-sm transition-all ${
+                  className={`relative w-full text-left p-3 rounded-xl border text-sm transition-all group ${
                     sessionId === s.id
-                      ? 'bg-slate-800 border-sky-500/50 text-white'
-                      : 'bg-slate-900/40 border-slate-800/60 text-gray-500 hover:bg-slate-800/60'
+                      ? 'bg-white border-[#2563EB] shadow-sm text-[#111111]'
+                      : 'bg-transparent border-transparent text-gray-500 hover:bg-white hover:border-gray-200'
                   }`}
                 >
-                  <p className="font-medium truncate">{s.title}</p>
-                  <p className="text-[10px] opacity-60 mt-1">{new Date(s.updated_at).toLocaleString()}</p>
-                </button>
+                  {editingSessionId === s.id ? (
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="text" 
+                        value={editingTitle} 
+                        onChange={(e) => setEditingTitle(e.target.value)} 
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveSessionName(s.id); }}
+                        className="w-full border rounded px-2 py-1 text-xs focus:outline-none focus:border-[#2563EB]" 
+                        autoFocus 
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <button onClick={(e) => { e.stopPropagation(); saveSessionName(s.id); }}><Check className="w-4 h-4 text-green-500" /></button>
+                    </div>
+                  ) : (
+                    <div onClick={() => loadSession(s.id)} className="w-full cursor-pointer">
+                      <p className="font-medium truncate pr-10">{s.title}</p>
+                      <p className="text-[10px] opacity-60 mt-1">{new Date(s.updated_at).toLocaleString()}</p>
+                    </div>
+                  )}
+                  {editingSessionId !== s.id && (
+                    <div className="absolute top-3 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={(e) => { e.stopPropagation(); setEditingTitle(s.title); setEditingSessionId(s.id); }} className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-blue-500"><Edit2 className="w-3.5 h-3.5" /></button>
+                      <button onClick={(e) => deleteSession(s.id, e)} className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
+                  )}
+                </div>
               ))}
               {sessions.length === 0 && (
                 <p className="text-xs text-center text-gray-500 mt-4">No chat history found.</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Graph Panel */}
-        {isInitialized && activeTab === 'graph' && (
-          <div className="px-2 flex-1 overflow-hidden pb-6">
-            <div className="flex items-center justify-between px-4 mb-2">
-              <h3 className="text-xs font-semibold text-gray-500">Knowledge Graph</h3>
-              <button 
-                onClick={() => setIsGraphExpanded(true)}
-                className="text-gray-500 hover:text-white transition-colors p-1 bg-slate-800/50 rounded-md"
-                title="Expand Graph"
-              >
-                <Maximize2 size={14} />
-              </button>
-            </div>
-            <div className="w-full h-full bg-slate-900/50 rounded-xl border border-slate-800/60 overflow-hidden relative group">
-              {graphData.nodes.length > 0 ? (
-                <ForceGraph2D
-                  graphData={graphData}
-                  width={290}
-                  height={400}
-                  nodeAutoColorBy="group"
-                  nodeLabel="id"
-                  linkDirectionalArrowLength={3.5}
-                  linkDirectionalArrowRelPos={1}
-                  linkColor={() => 'rgba(255,255,255,0.2)'}
-                  backgroundColor="rgba(0,0,0,0)"
-                />
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-xs text-gray-500">
-                  No graph entities extracted yet.
-                </div>
               )}
             </div>
           </div>
@@ -930,14 +939,35 @@ export default function Home() {
 
       {/* ── Main Chat Area ────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col relative overflow-hidden bg-white">
+        
+        {/* Floating Right Toolbar */}
+        <div className="absolute right-4 md:right-6 top-6 flex flex-col gap-3 z-30">
+          <Link href="/" title="Home" className="p-3 bg-white border border-[#E5E7EB] rounded-full shadow-sm hover:shadow-md hover:bg-[#F9FAFB] text-gray-500 hover:text-[#2563EB] transition-all group">
+            <Home className="w-5 h-5 group-hover:scale-110 transition-transform" />
+          </Link>
+          <button 
+            onClick={() => setIsGraphExpanded(true)} 
+            className="p-3 bg-white border border-[#E5E7EB] rounded-full shadow-sm hover:shadow-md hover:bg-[#F9FAFB] text-gray-500 hover:text-[#10b981] transition-all group" 
+            title="Knowledge Graph"
+          >
+            <Network className="w-5 h-5 group-hover:scale-110 transition-transform" />
+          </button>
+
+        </div>
         {/* Subtle background glow */}
         
 
         {/* Header */}
-        <div className="w-full flex items-center justify-center py-6 shrink-0 z-10 bg-white">
-          <div className="w-24 h-[1px] bg-[#E5E7EB]"></div>
-          <span className="mx-4 text-xs font-semibold text-[#111111] tracking-widest uppercase">Today</span>
-          <div className="w-24 h-[1px] bg-[#E5E7EB]"></div>
+        <div className="w-full flex items-center justify-between md:justify-center py-4 px-4 md:px-0 md:py-6 shrink-0 z-10 bg-white border-b border-[#E5E7EB] md:border-none">
+          <button className="md:hidden p-2 rounded-md hover:bg-gray-100" onClick={() => setIsSidebarOpen(true)}>
+            <Menu size={24} />
+          </button>
+          <div className="flex items-center">
+            <div className="hidden md:block w-24 h-[1px] bg-[#E5E7EB]"></div>
+            <span className="mx-4 text-xs font-semibold text-[#111111] tracking-widest uppercase">Today</span>
+            <div className="hidden md:block w-24 h-[1px] bg-[#E5E7EB]"></div>
+          </div>
+          <div className="w-10 md:hidden"></div> {/* Spacer for centering flex */}
         </div>
 {/* Messages */}
         <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6 z-0 max-w-4xl mx-auto w-full">
@@ -947,10 +977,10 @@ export default function Home() {
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-[78%] ${
+                className={`max-w-[90%] md:max-w-[78%] ${
                   msg.role === 'user'
-                    ? 'bg-[#FFD230] text-[#111111] rounded-[24px] rounded-br-[8px] px-6 py-4'
-                    : 'bg-[#F3F4F6] text-[#111111] rounded-[24px] rounded-bl-[8px] px-6 py-4 shadow-sm border-none'
+                    ? 'bg-[#FFD230] text-[#111111] rounded-[24px] rounded-br-[8px] px-5 py-3 md:px-6 md:py-4'
+                    : 'bg-[#F3F4F6] text-[#111111] rounded-[24px] rounded-bl-[8px] px-5 py-3 md:px-6 md:py-4 shadow-sm border-none'
                 }`}
               >
                 {msg.role === 'assistant' && (
@@ -1083,7 +1113,7 @@ ${msg.content}`;
           {/* Live status ticker */}
           {liveStatus && (
             <div className="flex justify-start">
-              <div className="bg-[#EBF1FF] text-[#2563EB] rounded-[24px] rounded-bl-[8px] px-5 py-3.5 flex items-center gap-3 max-w-[78%]">
+              <div className="bg-[#EBF1FF] text-[#2563EB] rounded-[24px] rounded-bl-[8px] px-5 py-3.5 flex items-center gap-3 max-w-[90%] md:max-w-[78%]">
                 <div className="relative shrink-0">
                   <div className="w-4 h-4 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
                 </div>
@@ -1096,8 +1126,29 @@ ${msg.content}`;
         </div>
 
         {/* Input Area */}
-        <div className="shrink-0 border-t border-[#E5E7EB] bg-white p-6 z-10">
-          <form onSubmit={handleSend} className="max-w-4xl mx-auto flex gap-3 items-end relative">
+        <div className="shrink-0 border-t border-[#E5E7EB] bg-white p-4 md:p-6 z-10">
+          <form onSubmit={handleSend} className="max-w-4xl mx-auto flex gap-2 md:gap-3 items-end relative">
+            
+            {/* Quick Actions */}
+            <div className="flex gap-1 md:gap-2 pb-2 md:pb-2.5">
+              <button
+                type="button"
+                onClick={() => setIsDocsOpen(true)}
+                className="p-2.5 md:p-3 rounded-full text-gray-500 hover:text-[#111111] hover:bg-gray-100 transition-colors"
+                title="Docs Library"
+              >
+                <Database className="w-5 h-5 md:w-5 md:h-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsUploadOpen(true)}
+                className="p-2.5 md:p-3 rounded-full text-gray-500 hover:text-[#2563EB] hover:bg-blue-50 transition-colors"
+                title="Upload Data"
+              >
+                <Plus className="w-5 h-5 md:w-5 md:h-5" />
+              </button>
+            </div>
+
             <div className="flex-1 relative">
               <textarea
                 id="chat-input"
@@ -1112,34 +1163,50 @@ ${msg.content}`;
                 placeholder="Type your message..."
                 disabled={!isInitialized || isGenerating}
                 rows={1}
-                className="w-full bg-white border-[1.5px] border-[#E5E7EB] text-[#111111] rounded-full
-                  py-4 pl-6 pr-16 resize-none
+                className="w-full bg-white border-[1.5px] border-[#E5E7EB] text-[#111111] rounded-3xl md:rounded-full
+                  py-3 pl-4 pr-24 md:py-4 md:pl-6 md:pr-24 resize-none
                   focus:outline-none focus:border-[#2563EB] focus:ring-0
-                  disabled:opacity-50 text-[15px] leading-relaxed
+                  disabled:opacity-50 text-[14px] md:text-[15px] leading-relaxed
                   transition-all shadow-sm placeholder:text-gray-400"
                 style={{ maxHeight: '120px', overflowY: 'auto' }}
               />
+
+              {/* Voice Input Button */}
+              <button
+                type="button"
+                onClick={isRecording ? handleStopRecording : handleStartRecording}
+                disabled={!isInitialized || isGenerating}
+                className={`absolute right-12 md:right-14 bottom-2 md:bottom-3 p-2 rounded-full transition-all ${
+                  isRecording 
+                    ? 'bg-red-100 text-red-500 animate-pulse hover:bg-red-200' 
+                    : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+                }`}
+                title={isRecording ? 'Stop Recording' : 'Record Audio'}
+              >
+                <Mic className="w-4 h-4 md:w-5 md:h-5" />
+              </button>
+
               <button
                 type="submit"
                 id="send-btn"
                 disabled={!input.trim() || !isInitialized || isGenerating}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 h-[40px] w-[40px] rounded-full flex items-center justify-center
+                className="absolute right-2 bottom-2 md:bottom-2.5 h-[36px] w-[36px] md:h-[40px] md:w-[40px] rounded-full flex items-center justify-center
                   bg-[#2563EB] hover:bg-blue-700
                   disabled:bg-gray-200 disabled:text-gray-400
                   text-white shadow-md transition-all duration-200 z-10"
               >
                 {isGenerating ? (
-                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+                  <svg className="animate-spin h-4 w-4 md:h-5 md:w-5" viewBox="0 0 24 24" fill="none">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                   </svg>
                 ) : (
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="md:w-[20px] md:h-[20px]"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
                 )}
               </button>
             </div>
           </form>
-          <p className="text-center text-[11px] text-gray-400 mt-3 font-medium">
+          <p className="text-center text-[10px] md:text-[11px] text-gray-400 mt-2 md:mt-3 font-medium">
             Enter to send · Shift+Enter for new line
           </p>
         </div>
