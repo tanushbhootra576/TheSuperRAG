@@ -1,5 +1,5 @@
 """
-reranker.py -- Cross-Encoder Re-ranking Module for TheSuperRAG.
+reranker.py - Cross-Encoder Re-ranking Module for TheSuperRAG.
 
 After hybrid retrieval fetches N candidates, the cross-encoder re-scores
 each (query, passage) pair with full attention, producing much more accurate
@@ -45,7 +45,7 @@ class CrossEncoderReranker:
             top_k:  Number of top documents to return after re-ranking.
 
         Returns:
-            (reranked_docs, scores) -- top_k docs sorted by descending score.
+            (reranked_docs, scores) - top_k docs sorted by descending score.
         """
         if not docs:
             return [], []
@@ -72,19 +72,19 @@ class CrossEncoderReranker:
             {"score": int, "label": str, "emoji": str}
         """
         if not scores:
-            return {"score": 0, "label": "Unknown", "emoji": "⚪"}
+            return {"score": 0, "label": "Unknown", "emoji": ""}
 
         best = max(scores)
 
-        # tanh maps ℝ -> (-1, 1); scale to 1–10
+        # tanh maps ℝ -> (-1, 1); scale to 1-10
         normalized = round(math.tanh(best / 5.0) * 4.5 + 5.5)
         normalized = max(1, min(10, normalized))
 
         if normalized >= 7:
-            label, emoji = "High", "🟢"
+            label, emoji = "High", ""
         elif normalized >= 4:
-            label, emoji = "Medium", "🟡"
+            label, emoji = "Medium", ""
         else:
-            label, emoji = "Low", "🔴"
+            label, emoji = "Low", ""
 
         return {"score": normalized, "label": label, "emoji": emoji}

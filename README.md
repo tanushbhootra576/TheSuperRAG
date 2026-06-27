@@ -12,10 +12,31 @@ It provides an advanced document ingestion and chat interface using FastAPI, Lan
 - **Live Document Management:** Auto-indexing and immediate processing of drag-and-drop PDF uploads.
 - **Streaming Citations:** Streams back text responses while providing references to the documents.
 
+## Architecture
+
+```mermaid
+graph TD
+    A[User Request] --> B[FastAPI Server]
+    B --> C{LangGraph router}
+    C -->|Generate| D[LLM Answer]
+    C -->|Retrieve| E[Qdrant Hybrid Search]
+    E --> F[Cross-Encoder Reranker]
+    F --> C
+    C -->|Missing Info| G[Query Rewrite]
+    G --> E
+    
+    H[PDF/Doc Uploads] --> I[DocumentLoader]
+    I --> J[Chunker]
+    J --> K[Embeddings + BM25]
+    K --> L[(Qdrant DB)]
+    J --> M[Graph Extraction]
+    M --> N[(SQLite DB)]
+```
+
 ## Project Structure
 
 - `server.py`: FastAPI server handling document upload, management, and SSE streaming chat endpoints.
-- `app.py`: Streamlit frontend application.
+- `frontend/`: Next.js frontend application.
 - `ingest.py` / `indexer.py`: Handles vector database storage (Qdrant) and automatic folder monitoring.
 - `graph.py`: LangGraph setup for self-healing RAG logic.
 - `database.py`: SQLAlchemy setup to track chat sessions and graph nodes.
@@ -53,9 +74,11 @@ uvicorn server:app --reload --host 127.0.0.1 --port 8000
 ```
 API Documentation will be available at `http://127.0.0.1:8000/docs`.
 
-### 2. Start the Frontend (Streamlit)
+### 2. Start the Frontend (Next.js)
 ```bash
-streamlit run app.py
+cd frontend
+npm install
+npm run dev
 ```
 
 ## Citation

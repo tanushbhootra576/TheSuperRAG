@@ -133,3 +133,8 @@ DATA/
 DATA_TEST/
 qdrant_storage/
 *.db
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/

@@ -11,18 +11,8 @@ python-dotenv
 qdrant-client[fastembed]
 huggingface-hub
 sentence-transformers
-streamlit
 
 fastapi
 uvicorn[standard]
 python-multipart
 aiofiles
-python-docx
-openpyxl
-python-pptx
-youtube-transcript-api
-httpx
-beautifulsoup4
-pytesseract
-pillow
-scikit-learn

@@ -5,8 +5,6 @@ from langchain_core.documents import Document
 
 from ingest import DocumentStore
 from reranker import CrossEncoderReranker
-from query_processor import QueryProcessor
-from filters import FilterBuilder
 import asyncio
 
 RETRIEVAL_K = 10
@@ -100,23 +98,10 @@ class RAGGraph:
 
     async def retrieve_step(self, state):
         query = state["current_search_query"]
-        processor = QueryProcessor(self._get_llm(temperature=0.2))
-        queries, latency = await processor.process(query, False, False)
         
-        qdrant_filter = FilterBuilder.build({})
-        retriever = self.doc_store.get_retriever(qdrant_filter=qdrant_filter, k=RETRIEVAL_K)
+        retriever = self.doc_store.get_retriever(qdrant_filter=None, k=RETRIEVAL_K)
         
-        tasks = [retriever.ainvoke(q) for q in queries]
-        results = await asyncio.gather(*tasks)
-        
-        raw_docs = []
-        seen = set()
-        for res in results:
-            for d in res:
-                content = d.page_content
-                if content not in seen:
-                    seen.add(content)
-                    raw_docs.append(d)
+        raw_docs = await retriever.ainvoke(query)
                     
         final_docs, scores = self.reranker.rerank(query, raw_docs, top_k=RERANK_TOP_K)
             
@@ -135,9 +120,9 @@ class RAGGraph:
         # Simulated confidence score
         conf_val = min(max(avg_score, 0.0), 1.0)
         
-        if conf_val > 0.8: confidence = {"score": round(conf_val*10, 1), "label": "High", "emoji": "🟢"}
-        elif conf_val > 0.4: confidence = {"score": round(conf_val*10, 1), "label": "Medium", "emoji": "🟡"}
-        else: confidence = {"score": round(conf_val*10, 1), "label": "Low", "emoji": "🔴"}
+        if conf_val > 0.8: confidence = {"score": round(conf_val*10, 1), "label": "High", "emoji": ""}
+        elif conf_val > 0.4: confidence = {"score": round(conf_val*10, 1), "label": "Medium", "emoji": ""}
+        else: confidence = {"score": round(conf_val*10, 1), "label": "Low", "emoji": ""}
         
         return retrieved_docs, confidence
 
