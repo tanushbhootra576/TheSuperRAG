@@ -8,6 +8,10 @@ Manages a local Qdrant vector collection with:
 """
 import os
 from typing import List, Optional, Callable
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -44,7 +48,7 @@ class DocumentStore:
         os.makedirs(self.qdrant_path, exist_ok=True)
         os.makedirs(self.folder_path, exist_ok=True)
 
-        print("  [*] Loading dense embedding model (all-MiniLM-L6-v2)...")
+        logger.info("Loading dense embedding model (all-MiniLM-L6-v2)...")
         self.dense_embeddings = HuggingFaceEmbeddings(model_name=DENSE_MODEL)
         self.client = QdrantClient(path=self.qdrant_path)
 
@@ -112,6 +116,45 @@ class DocumentStore:
                 vector_name="dense",
             )
 
+    def _enrich_chunks(self, chunks: List[Document], file_name: str, raw_docs: List[Document]):
+        try:
+            from langchain_groq import ChatGroq
+            from langchain_core.messages import HumanMessage
+            
+            groq_key = os.getenv("GROQ_API_KEY")
+            if not groq_key: return
+            
+            llm = ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=groq_key, temperature=0.0)
+            
+            full_text = "\n".join([doc.page_content for doc in raw_docs])
+            full_text = full_text[:15000] # Limit to avoid exceeding context window
+            
+            for chunk in chunks:
+                prompt = (
+                    f"<document>\n{full_text}\n</document>\n"
+                    f"Here is the chunk we want to situate within the whole document:\n"
+                    f"<chunk>\n{chunk.page_content}\n</chunk>\n"
+                    f"Please give a short succinct context to situate this chunk within the overall document for the purposes of improving search retrieval of the chunk. Answer only with the succinct context and nothing else."
+                )
+                try:
+                    res = llm.invoke([HumanMessage(content=prompt)])
+                    if res and res.content:
+                        chunk.page_content = f"Context: {res.content.strip()}\n\nChunk: {chunk.page_content}"
+                except Exception as e:
+                    logger.warning(f"Failed to enrich chunk: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to init LLM for chunk enrichment: {e}")
+
+    def _redact_pii(self, text: str) -> str:
+        import re
+        # Basic Email Redaction
+        text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[REDACTED_EMAIL]', text)
+        # Basic SSN Redaction
+        text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[REDACTED_SSN]', text)
+        # Phone numbers
+        text = re.sub(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', '[REDACTED_PHONE]', text)
+        return text
+
     def _auto_index_folder(self, on_progress: Optional[Callable] = None):
         already_indexed = set(self.get_indexed_files())
         supported_exts = {".pdf", ".docx", ".txt", ".md", ".csv", ".xlsx", ".pptx"}
@@ -151,7 +194,10 @@ class DocumentStore:
             chunks = chunker.chunk(raw_docs, strategy)
             if not chunks: return 0
 
+            self._enrich_chunks(chunks, file_name, raw_docs)
+
             for chunk in chunks:
+                chunk.page_content = self._redact_pii(chunk.page_content)
                 chunk.metadata["page_number"] = chunk.metadata.get("page_number", chunk.metadata.get("page", "N/A"))
                 chunk.metadata["source_file"] = file_name
                 chunk.metadata["category"] = chunk.metadata.get("category", "text")

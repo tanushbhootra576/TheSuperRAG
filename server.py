@@ -5,14 +5,33 @@ import json
 import shutil
 import uuid
 import datetime
+import logging
 from typing import List, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, Depends
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
+
+class EvaluationResult(BaseModel):
+    faithfulness_score: float
+    answer_relevance_score: float
+    reasoning: str
+
+class MemoryUpdate(BaseModel):
+    memory: str
+
+
 
 from database import SessionLocal, ChatSession, ChatMessage
 from graph import RAGGraph
@@ -78,7 +97,7 @@ def save_chat_to_db(session_id: str, query: str, response: str, docs: list, conf
         db.add(ChatMessage(session_id=session_id, role="assistant", content=response, docs=docs, confidence=confidence))
         db.commit()
     except Exception as e:
-        print("Failed to save chat:", e)
+        logger.error(f"Failed to save chat: {e}", exc_info=True)
     finally:
         db.close()
 
@@ -123,26 +142,41 @@ def update_session(session_id: str, payload: SessionUpdate, db: Session = Depend
 async def chat_stream(request: ChatRequest):
     rag_system = app.state.rag_system
     async def event_generator():
+        from database import UserProfile
+        db = SessionLocal()
+        user_profile = db.query(UserProfile).filter(UserProfile.id == "default_user").first()
+        user_memory = user_profile.memory if user_profile else ""
+        db.close()
+        
         inputs = {
             "chat_history": request.history,
             "user_query": request.query,
             "current_search_query": request.query,
-            "temperature": request.temperature
+            "temperature": request.temperature,
+            "user_memory": user_memory
         }
         final = {"generation": "", "retrieved_docs": [], "confidence": {}}
         current_query = request.query
 
         async for event in rag_system.app.astream_events(inputs, version="v2"):
-            kind, node_name = event["event"], event.get("metadata", {}).get("langgraph_node", "")
+            kind = event["event"]
+            node_name = event.get("metadata", {}).get("langgraph_node", "")
+            
             if kind == "on_chat_model_stream" and node_name == "generate":
                 chunk_text = event["data"]["chunk"].content
                 if chunk_text: yield _sse({"type": "token", "content": chunk_text})
+            elif kind == "decomposed":
+                yield _sse({"type": "decomposed", "sub_queries": event.get("sub_queries", [])})
+            elif kind == "tool_start":
+                yield _sse({"type": "tool_start", "tool": event.get("tool"), "query": event.get("query")})
+            elif kind == "tool_done":
+                yield _sse({"type": "tool_done", "tool": event.get("tool"), "result_count": event.get("result_count")})
             elif kind == "on_chain_end" and node_name in ["smart_router", "retrieve", "generate", "rewrite_query"]:
-                node_output = event["data"].get("output", {})
+                node_output = event.get("data", {}).get("output", {})
                 if not isinstance(node_output, dict): continue
                 if node_name == "smart_router":
                     gen = node_output.get("generation", "")
-                    if gen.lower() != "proceed":
+                    if gen and gen.lower() != "proceed":
                         yield _sse({"type": "final", "message": gen, "docs": [], "confidence": {}})
                         save_chat_to_db(request.session_id, request.query, gen, [], {})
                         yield "data: [DONE]\n\n"
@@ -150,7 +184,7 @@ async def chat_stream(request: ChatRequest):
                 elif node_name == "retrieve":
                     final["retrieved_docs"] = node_output.get("retrieved_docs", [])
                     final["confidence"] = node_output.get("confidence", {})
-                    yield _sse({"type": "status", "message": f" Hybrid search + re-ranking: \"{current_query}\""})
+                    yield _sse({"type": "metadata", "confidence": final["confidence"].get("score", 0), "sources": final["retrieved_docs"]})
                 elif node_name == "generate":
                     final["generation"] = node_output.get("generation", "")
                 elif node_name == "rewrite_query":
@@ -175,8 +209,19 @@ async def list_documents():
     return {"documents": app.state.doc_store.get_indexed_files()}
 
 @app.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
-    if not file.filename or not file.filename.lower().endswith(('.pdf', '.txt', '.md', '.csv', '.xlsx', '.docx')):
+async def upload_document(
+    file: Optional[UploadFile] = File(None),
+    url: Optional[str] = Form(None),
+    session_id: Optional[str] = Form(None)
+):
+    if url:
+        chunks = app.state.doc_store.index_file(url, url, session_id=session_id)
+        return {"status": "success", "file": url, "chunks_indexed": chunks}
+        
+    if not file or not file.filename:
+        raise HTTPException(status_code=400, detail="Must provide either a file or a url.")
+
+    if not file.filename.lower().endswith(('.pdf', '.txt', '.md', '.csv', '.xlsx', '.docx')):
         raise HTTPException(status_code=400, detail="Unsupported file format.")
 
     save_path = os.path.join(DATA_FOLDER, file.filename)
@@ -184,7 +229,7 @@ async def upload_document(file: UploadFile = File(...)):
     with open(save_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    chunks = app.state.doc_store.index_file(save_path, file.filename)
+    chunks = app.state.doc_store.index_file(save_path, file.filename, session_id=session_id)
     return {"status": "success", "file": file.filename, "chunks_indexed": chunks}
 
 @app.delete("/documents/{filename}")
@@ -200,5 +245,97 @@ async def delete_document(filename: str):
 async def get_status():
     return {
         "hybrid_search": app.state.doc_store.hybrid_enabled,
-        "documents": app.state.doc_store.get_indexed_files()
+        "documents": app.state.doc_store.get_indexed_files(),
+        "initialized": True,
+        "init_in_progress": False,
+        "init_error": None
     }
+
+@app.post("/init")
+async def init_backend():
+    return {"status": "already initialized"}
+
+@app.get("/events")
+async def get_events():
+    async def dummy_events():
+        yield "data: [DONE]\n\n"
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(dummy_events(), media_type="text/event-stream")
+
+@app.post("/sessions/{session_id}/evaluate", response_model=EvaluationResult)
+async def evaluate_session(session_id: str, db: Session = Depends(get_db)):
+    messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(desc(ChatMessage.id)).limit(2).all()
+    if len(messages) < 2:
+        raise HTTPException(status_code=400, detail="Not enough messages to evaluate")
+        
+    user_msg = next((m for m in messages if m.role == "user"), None)
+    asst_msg = next((m for m in messages if m.role == "assistant"), None)
+    
+    if not user_msg or not asst_msg:
+        raise HTTPException(status_code=400, detail="Incomplete chat turn")
+        
+    context = "\n".join([f"[{i+1}] {d.get('snippet', '')}" for i, d in enumerate(asst_msg.docs)]) if asst_msg.docs else "No context retrieved."
+    
+    from langchain_groq import ChatGroq
+    from langchain_core.messages import HumanMessage
+    import os
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+        
+    llm = ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=groq_key, temperature=0.0)
+    
+    prompt = f"""You are an expert evaluator for a RAG system.
+Evaluate the following interaction based on two metrics:
+1. Faithfulness: Is the answer derived ONLY from the provided context? (Score 0.0 to 1.0)
+2. Answer Relevance: Does the answer directly address the user's query? (Score 0.0 to 1.0)
+
+User Query: {user_msg.content}
+Retrieved Context: {context}
+System Answer: {asst_msg.content}
+
+Return your evaluation EXACTLY in this JSON format:
+{{
+  "faithfulness_score": 0.9,
+  "answer_relevance_score": 0.8,
+  "reasoning": "Brief explanation of scores..."
+}}"""
+    
+    try:
+        res = await llm.ainvoke([HumanMessage(content=prompt)])
+        content = res.content
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+            
+        import json
+        eval_data = json.loads(content, strict=False)
+        return EvaluationResult(
+            faithfulness_score=eval_data.get("faithfulness_score", 0.0),
+            answer_relevance_score=eval_data.get("answer_relevance_score", 0.0),
+            reasoning=eval_data.get("reasoning", "No reasoning provided")
+        )
+    except Exception as e:
+        logger.error(f"Evaluation failed: {e}")
+        raise HTTPException(status_code=500, detail="Evaluation failed")
+
+@app.get("/user/memory")
+async def get_user_memory(db: Session = Depends(get_db)):
+    from database import UserProfile
+    user_profile = db.query(UserProfile).filter(UserProfile.id == "default_user").first()
+    return {"memory": user_profile.memory if user_profile else ""}
+
+@app.post("/user/memory")
+@app.patch("/user/memory")
+async def update_user_memory(payload: MemoryUpdate, db: Session = Depends(get_db)):
+    from database import UserProfile
+    user_profile = db.query(UserProfile).filter(UserProfile.id == "default_user").first()
+    if not user_profile:
+        user_profile = UserProfile(id="default_user", memory=payload.memory)
+        db.add(user_profile)
+    else:
+        user_profile.memory = payload.memory
+    db.commit()
+    return {"status": "success", "memory": user_profile.memory}
+

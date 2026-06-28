@@ -21,6 +21,14 @@ class ChatSession(Base):
 
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan", order_by="ChatMessage.created_at")
 
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+    
+    id = Column(String, primary_key=True, index=True) # e.g. "default_user"
+    preferences = Column(JSON, default=dict) # e.g. {"verbosity": "high", "expertise": "expert"}
+    memory = Column(String, default="") # long term summarized memory
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
 class ChatMessage(Base):
     __tablename__ = "messages"
 

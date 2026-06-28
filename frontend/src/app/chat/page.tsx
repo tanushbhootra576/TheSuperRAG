@@ -91,6 +91,36 @@ export default function ChatPage() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isDocsOpen, setIsDocsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isMemoryOpen, setIsMemoryOpen] = useState(false);
+  const [memoryText, setMemoryText] = useState('');
+
+  const fetchMemory = async () => {
+    try {
+      const res = await fetch(`${API}/user/memory`);
+      if (res.ok) {
+        const data = await res.json();
+        setMemoryText(data.memory || '');
+      }
+    } catch {}
+  };
+
+  const saveMemory = async () => {
+    try {
+      const res = await fetch(`${API}/user/memory`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memory: memoryText }),
+      });
+      if (res.ok) {
+        addToast('Memory updated', 'success');
+        setIsMemoryOpen(false);
+      } else {
+        addToast('Failed to save memory', 'error');
+      }
+    } catch {
+      addToast('Error saving memory', 'error');
+    }
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const toastCounter = useRef(0);
@@ -424,6 +454,16 @@ export default function ChatPage() {
             if (parsed.type === 'status') {
               setLiveStatus(parsed.message);
               if (parsed.event === 'heal') setHealCount((n) => n + 1);
+            } else if (parsed.type === 'decomposed') {
+              setLiveStatus(` Analyzing ${parsed.sub_queries?.length || 1} distinct parts of your question...`);
+            } else if (parsed.type === 'tool_start') {
+              const toolName = parsed.tool === 'web_search' ? 'Web' : parsed.tool === 'sql_query' ? 'Database' : 'Knowledge Base';
+              setLiveStatus(` Querying ${toolName}: "${parsed.query}"`);
+            } else if (parsed.type === 'tool_done') {
+              const toolName = parsed.tool === 'web_search' ? 'Web' : parsed.tool === 'sql_query' ? 'Database' : 'Knowledge Base';
+              setLiveStatus(` Found ${parsed.result_count} results from ${toolName}`);
+            } else if (parsed.type === 'metadata') {
+              setLiveStatus(` Synthesizing answer from sources...`);
             } else if (parsed.type === 'token') {
               setMessages((prev) => {
                 const newMsgs = [...prev];
@@ -940,11 +980,42 @@ export default function ChatPage() {
       {/* ── Main Chat Area ────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col relative overflow-hidden bg-white">
         
+        {/* Memory Editor Modal */}
+        {isMemoryOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-4 border-b flex justify-between items-center">
+                <h3 className="font-bold text-gray-800">User Memory Editor</h3>
+                <button onClick={() => setIsMemoryOpen(false)} className="text-gray-400 hover:text-gray-600">×</button>
+              </div>
+              <div className="p-4">
+                <p className="text-xs text-gray-500 mb-2">Edit what the system remembers about you.</p>
+                <textarea
+                  className="w-full h-32 border rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={memoryText}
+                  onChange={(e) => setMemoryText(e.target.value)}
+                />
+              </div>
+              <div className="p-4 bg-gray-50 border-t flex justify-end gap-2">
+                <button onClick={() => setIsMemoryOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-600">Cancel</button>
+                <button onClick={saveMemory} className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-xl hover:bg-blue-700">Save</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Floating Right Toolbar */}
         <div className="absolute right-4 md:right-6 top-6 flex flex-col gap-3 z-30">
           <Link href="/" title="Home" className="p-3 bg-white border border-[#E5E7EB] rounded-full shadow-sm hover:shadow-md hover:bg-[#F9FAFB] text-gray-500 hover:text-[#2563EB] transition-all group">
             <Home className="w-5 h-5 group-hover:scale-110 transition-transform" />
           </Link>
+          <button 
+            onClick={() => { setIsMemoryOpen(true); fetchMemory(); }} 
+            title="Memory Editor" 
+            className="p-3 bg-white border border-[#E5E7EB] rounded-full shadow-sm hover:shadow-md hover:bg-[#F9FAFB] text-gray-500 hover:text-purple-600 transition-all group"
+          >
+            <Settings className="w-5 h-5 group-hover:scale-110 transition-transform" />
+          </button>
           <button 
             onClick={() => setIsGraphExpanded(true)} 
             className="p-3 bg-white border border-[#E5E7EB] rounded-full shadow-sm hover:shadow-md hover:bg-[#F9FAFB] text-gray-500 hover:text-[#10b981] transition-all group" 
@@ -1023,9 +1094,7 @@ export default function ChatPage() {
                     </button>
                     <button
                       onClick={async () => {
-                        const shareText = `Check out this response from SuperRAG:
-
-${msg.content}`;
+                        const shareText = `Check out this response from SuperRAG:\n\n${msg.content}`;
                         if (navigator.share) {
                           try {
                             await navigator.share({ title: 'SuperRAG Response', text: shareText });
@@ -1041,6 +1110,27 @@ ${msg.content}`;
                     >
                       <Share size={14} /> Share
                     </button>
+                    {sessionId && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            addToast('Evaluating response...', 'info');
+                            const res = await fetch(`${API}/sessions/${sessionId}/evaluate`, { method: 'POST' });
+                            if (res.ok) {
+                              const data = await res.json();
+                              addToast(`Evaluation: Faithfulness ${data.faithfulness_score.toFixed(2)}, Relevance ${data.answer_relevance_score.toFixed(2)}`, 'success');
+                            } else {
+                              addToast('Evaluation failed', 'error');
+                            }
+                          } catch {
+                            addToast('Evaluation error', 'error');
+                          }
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white hover:bg-green-50 text-green-700 transition-colors border border-green-200 text-xs font-medium shadow-sm ml-auto"
+                      >
+                        <Check size={14} /> Evaluate
+                      </button>
+                    )}
                   </div>
                 )}
                 
