@@ -25,4 +25,4 @@ RUN python -c "from langchain_huggingface import HuggingFaceEmbeddings; HuggingF
 EXPOSE 8000
 
 # Start server using Uvicorn directly, respecting the PORT env var (defaults to 8000)
-CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4"]
+CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
