@@ -1,30 +1,37 @@
 # TheSuperRAG
 
-TheSuperRAG is a blazing-fast, serverless, and Self-Healing Retrieval-Augmented Generation (RAG) backend with hybrid search, cross-encoder re-ranking, exact citations, and local browser-based document storage. 
+TheSuperRAG is a serverless, stateless Retrieval-Augmented Generation system. It implements hybrid search, cross-encoder re-ranking, source citations, and client-side document storage.
 
-It provides an advanced AI document chat interface using **Next.js**, **FastAPI**, **LangGraph**, and **Qdrant**. The UI is built with a striking animated Bauhaus aesthetic using **Framer Motion**.
+The backend is built with FastAPI, LangGraph, and Qdrant. The frontend is built with Next.js and uses Server-Sent Events for real-time data streaming.
 
-## 🚀 Key Architectural Upgrades
+## System Architecture
 
-- **Zero-Storage Privacy (Stateless):** Your files never touch the server disk. Documents are stored locally in your browser's IndexedDB and processed exclusively in-memory on the backend.
-- **PyTorch-Free Performance (FastEmbed):** We completely removed PyTorch and heavy machine learning dependencies. The backend uses `FastEmbed` to run both the dense embedding model and the cross-encoder via ONNX runtime, saving >300MB of RAM and booting 5x faster.
-- **BYOK (Bring Your Own Key):** Users can enter their own API keys (Groq, OpenAI, Anthropic, Gemini) from the frontend. The server is completely unauthenticated and API-agnostic.
-- **Self-Healing RAG:** Leverages LangGraph to continuously validate retrieved context. If the AI doesn't find the answer, it rewrites its own query and searches again.
-- **Framer Motion UI:** The landing page and chat interfaces feature high-end micro-animations and responsive aesthetics.
+The architecture prioritizes data sovereignty and minimal server footprint.
 
-## Features
+| Component | Technology | Description |
+| :--- | :--- | :--- |
+| **Storage** | IndexedDB | Documents are stored exclusively in the client browser. The server remains stateless and does not write files to disk. |
+| **Vector Engine** | Qdrant | Operates entirely in-memory for vector and sparse indexing. |
+| **Embeddings** | FastEmbed (ONNX) | Replaces PyTorch dependencies. Executes dense embedding models and cross-encoders via ONNX runtime to reduce memory overhead. |
+| **Routing** | LangGraph | Manages agentic state, validates retrieved context, and performs automated query correction. |
+| **Authentication** | Client-Provided | Users supply their own LLM API keys via the frontend interface. The server remains API-agnostic. |
 
-- **Hybrid Search & Re-ranking:** Combines dense (Vector) and sparse (BM25) embeddings for exact keyword matches and semantic meaning, re-ranked with a Cross-Encoder.
-- **Agentic Query Decomposition:** Automatically breaks down complex multi-hop questions into parallel sub-queries.
-- **Live Tool Streaming UI:** Visualizes background tool execution and query decomposition in real-time in the frontend via SSE.
-- **YouTube & Web Indexing (Local):** Paste YouTube URLs to instantly transcribe and ingest them into the knowledge base (Requires running locally due to Cloud IP bans).
-- **Streaming Citations:** Streams back text responses while providing interactive references and source snippets.
+## Feature Specifications
 
-## Architecture
+| Feature | Implementation Details |
+| :--- | :--- |
+| **Hybrid Search** | Combines dense vector search and sparse BM25 retrieval for improved keyword and semantic matching. |
+| **Cross-Encoder Reranking** | Re-evaluates retrieved chunks against the original query to filter low-relevance context prior to LLM generation. |
+| **Agentic Query Decomposition** | Parses complex questions into parallel sub-queries for multi-step retrieval. |
+| **Streaming UI** | Visualizes tool execution, sub-queries, and token generation in real-time via Server-Sent Events. |
+| **Web Indexing** | Supports ingestion of web and media links directly into the vector index. Note: Cloud deployments may encounter IP restrictions for external media providers. |
+| **Citations** | Maps generated text back to specific source document snippets. |
+
+## Data Flow
 
 ```mermaid
 graph TD
-    A["User Browser (Next.js)"] -->|Files stored in IndexedDB| B
+    A["User Browser (Next.js)"] -->|"Files stored in IndexedDB"| B
     B["User Request"] --> C["FastAPI Server"]
     C -->|"Stateless In-Memory Qdrant"| D["FastEmbed ONNX Embeddings"]
     D --> E{"LangGraph Agent Router"}
@@ -34,39 +41,40 @@ graph TD
     G -->|"Streaming SSE"| A
 ```
 
-## Project Structure
+## Repository Structure
 
-- `server.py`: FastAPI server handling document upload, management, and SSE streaming chat endpoints.
-- `frontend/`: Next.js frontend application with Framer Motion animations.
-- `ingest.py`: Handles vector database in-memory storage (Qdrant) and FastEmbed dense models.
-- `reranker.py`: FastEmbed TextCrossEncoder logic.
-- `graph.py`: LangGraph setup for self-healing RAG logic.
-- `database.py`: SQLAlchemy setup to track chat sessions.
+| File / Directory | Purpose |
+| :--- | :--- |
+| `server.py` | FastAPI application, endpoint definitions, and SSE streaming handlers. |
+| `frontend/` | Next.js application directory. |
+| `ingest.py` | Qdrant in-memory initialization and FastEmbed document chunking logic. |
+| `reranker.py` | TextCrossEncoder implementation for context scoring. |
+| `graph.py` | LangGraph state machine definitions for query processing. |
+| `database.py` | SQLAlchemy configuration for session state tracking. |
 
-## Deployment (Production Ready)
+## Deployment
 
-The simplest and most robust way to run TheSuperRAG in a production environment is using Docker Compose.
+The system is packaged for containerized deployment using Docker Compose.
 
-### Requirements
-- Docker
-- Docker Compose
+### Environment Configuration
 
-### 1. Configure Environment Variables
-Create a `.env` file in the root directory and add your API keys:
+Create a `.env` file in the root directory:
 ```bash
-GROQ_API_KEY=your_groq_api_key
+GROQ_API_KEY=your_api_key_here
 ```
 
-### 2. Run with Docker Compose
-To build and start both the backend and frontend in production mode, simply run:
+### Docker Execution
+
+Build and run the containers:
 ```bash
 docker-compose up -d --build
 ```
 
-- **Backend API**: `http://localhost:8000/docs`
-- **Frontend App**: `http://localhost:3000`
+Services will be accessible at:
+* Backend API: `http://localhost:8000/docs`
+* Frontend Application: `http://localhost:3000`
 
-## Running Locally (Development Mode)
+## Local Development Setup
 
 1. Clone the repository:
    ```bash
@@ -74,34 +82,33 @@ docker-compose up -d --build
    cd TheSuperRAG
    ```
 
-2. Create and activate a virtual environment:
+2. Initialize a virtual environment:
    ```bash
    python -m venv venv
-   # On Windows
-   .\venv\Scripts\activate
-   # On Linux/macOS
    source venv/bin/activate
    ```
 
-3. Install the dependencies:
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Start the FastAPI Backend
-```bash
-uvicorn server:app --reload --host 127.0.0.1 --port 8000
-```
+4. Execute the FastAPI Backend:
+   ```bash
+   uvicorn server:app --reload --host 127.0.0.1 --port 8000
+   ```
 
-5. Start the Frontend (Next.js)
-```bash
-cd frontend
-npm install
-npm run dev
-```
+5. Execute the Frontend:
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
 
 ## Citation
-If you use this software, please cite it using the included `CITATION.cff` file.
+
+To cite this software, refer to the included `CITATION.cff` file.
 
 ## License
+
 This project is licensed under the MIT License.
