@@ -24,14 +24,14 @@ It provides an advanced AI document chat interface using **Next.js**, **FastAPI*
 
 ```mermaid
 graph TD
-    A[User Browser (Next.js)] -->|Files stored in IndexedDB| B
-    B[User Request] --> C[FastAPI Server]
-    C -->|Stateless In-Memory Qdrant| D[FastEmbed ONNX Embeddings]
-    D --> E{LangGraph Agent Router}
-    E -->|Self-Correction| E
-    E --> F[Cross-Encoder Reranker]
-    F --> G[LLM Generation (Groq/OpenAI)]
-    G -->|Streaming SSE| A
+    A["User Browser (Next.js)"] -->|Files stored in IndexedDB| B
+    B["User Request"] --> C["FastAPI Server"]
+    C -->|"Stateless In-Memory Qdrant"| D["FastEmbed ONNX Embeddings"]
+    D --> E{"LangGraph Agent Router"}
+    E -->|"Self-Correction"| E
+    E --> F["Cross-Encoder Reranker"]
+    F --> G["LLM Generation (Groq/OpenAI)"]
+    G -->|"Streaming SSE"| A
 ```
 
 ## Project Structure
