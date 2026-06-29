@@ -234,6 +234,14 @@ async def upload_document(
     if not file.filename.lower().endswith(('.pdf', '.txt', '.md', '.csv', '.xlsx', '.docx')):
         raise HTTPException(status_code=400, detail="Unsupported file format.")
 
+    # To prevent Render Free Tier OOM crashes, restrict file size to 5MB
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    
+    if file_size > 5 * 1024 * 1024: # 5MB
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 5MB for this live demo to prevent server memory limits.")
+
     save_path = os.path.join(DATA_FOLDER, file.filename)
     os.makedirs(DATA_FOLDER, exist_ok=True)
     with open(save_path, "wb") as buffer:
