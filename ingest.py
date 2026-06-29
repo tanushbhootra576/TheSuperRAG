@@ -50,7 +50,7 @@ class DocumentStore:
 
         logger.info("Loading dense embedding model (all-MiniLM-L6-v2)...")
         self.dense_embeddings = HuggingFaceEmbeddings(model_name=DENSE_MODEL)
-        self.client = QdrantClient(path=self.qdrant_path)
+        self.client = QdrantClient(location=":memory:")
 
         self._migrate_if_needed()
         self._ensure_collection()
@@ -117,33 +117,7 @@ class DocumentStore:
             )
 
     def _enrich_chunks(self, chunks: List[Document], file_name: str, raw_docs: List[Document]):
-        try:
-            from langchain_groq import ChatGroq
-            from langchain_core.messages import HumanMessage
-            
-            groq_key = os.getenv("GROQ_API_KEY")
-            if not groq_key: return
-            
-            llm = ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=groq_key, temperature=0.0)
-            
-            full_text = "\n".join([doc.page_content for doc in raw_docs])
-            full_text = full_text[:15000] # Limit to avoid exceeding context window
-            
-            for chunk in chunks:
-                prompt = (
-                    f"<document>\n{full_text}\n</document>\n"
-                    f"Here is the chunk we want to situate within the whole document:\n"
-                    f"<chunk>\n{chunk.page_content}\n</chunk>\n"
-                    f"Please give a short succinct context to situate this chunk within the overall document for the purposes of improving search retrieval of the chunk. Answer only with the succinct context and nothing else."
-                )
-                try:
-                    res = llm.invoke([HumanMessage(content=prompt)])
-                    if res and res.content:
-                        chunk.page_content = f"Context: {res.content.strip()}\n\nChunk: {chunk.page_content}"
-                except Exception as e:
-                    logger.warning(f"Failed to enrich chunk: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to init LLM for chunk enrichment: {e}")
+        return # Disabled to prevent 429 Rate Limit issues on BYOK setups
 
     def _redact_pii(self, text: str) -> str:
         import re
@@ -205,6 +179,7 @@ class DocumentStore:
             self._vector_store.add_documents(chunks)
             return len(chunks)
         except Exception as e:
+            logger.error(f"Error indexing file {file_name}: {e}")
             return 0
 
     def delete_file(self, file_name: str) -> bool:

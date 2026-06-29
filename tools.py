@@ -29,14 +29,16 @@ Tables:
 - orders(id, user_id, product_id, quantity, status, order_date)
 """
 
-async def execute_sql_query(query: str) -> list[dict]:
+async def execute_sql_query(query: str, llm=None) -> list[dict]:
     try:
         from langchain_groq import ChatGroq
         from langchain_core.messages import SystemMessage, HumanMessage
         import json
         import sqlite3
         
-        llm = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0.0)
+        if llm is None:
+            llm = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0.0)
+        
         
         sys_msg = (
             "You are a SQL expert. Translate the user's natural language question into a SQL query.\n"

@@ -98,7 +98,7 @@ export default function BauhausLandingPage() {
           <h2 className="text-4xl lg:text-6xl font-black uppercase tracking-tighter">Engineered for Accuracy</h2>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
           
           <div className="p-8 lg:p-12 border-b-4 md:border-b-0 md:border-r-4 border-[#111111] hover:bg-[#F9FAFB] transition-colors">
             <div className="w-16 h-16 bg-[#2563EB] border-4 border-[#111111] rounded-full mb-8 shadow-[6px_6px_0px_#111111]"></div>
@@ -116,11 +116,19 @@ export default function BauhausLandingPage() {
             </p>
           </div>
 
-          <div className="p-8 lg:p-12 hover:bg-[#F9FAFB] transition-colors">
+          <div className="p-8 lg:p-12 hover:bg-[#F9FAFB] transition-colors border-b-4 md:border-b-0 md:border-r-4 border-[#111111]">
             <div className="w-16 h-16 bg-[#111111] border-4 border-[#111111] rounded-sm mb-8 shadow-[6px_6px_0px_#FFD230]"></div>
-            <h3 className="text-2xl font-black uppercase tracking-widest mb-4">Persistent Memory</h3>
+            <h3 className="text-2xl font-black uppercase tracking-widest mb-4">BYOK Freedom</h3>
             <p className="text-lg font-bold text-gray-700 leading-relaxed border-l-4 border-[#111111] pl-4">
-              Backed by SQLite and SQLAlchemy, all your chat sessions and retrieved document contexts are securely saved locally for instant resumption.
+              Bring Your Own Key! Seamlessly switch between Groq, OpenAI, Anthropic, and Google GenAI without any vendor lock-in.
+            </p>
+          </div>
+          
+          <div className="p-8 lg:p-12 hover:bg-[#F9FAFB] transition-colors">
+            <div className="w-16 h-16 bg-[#FFD230] border-4 border-[#111111] rounded-tl-full mb-8 shadow-[6px_6px_0px_#111111]"></div>
+            <h3 className="text-2xl font-black uppercase tracking-widest mb-4">Zero Server Storage</h3>
+            <p className="text-lg font-bold text-gray-700 leading-relaxed border-l-4 border-[#FFD230] pl-4">
+              Your files never touch our disk. Documents are stored locally in your browser's IndexedDB and indexed strictly in-memory.
             </p>
           </div>
 
@@ -164,6 +172,13 @@ export default function BauhausLandingPage() {
                <div>
                   <h4 className="text-xl font-black uppercase tracking-widest">LangGraph Pipeline</h4>
                   <p className="font-bold text-gray-600">Stateful node execution for robust and predictable query routing.</p>
+               </div>
+            </div>
+            <div className="flex items-center gap-6">
+               <div className="w-12 h-12 bg-[#FFD230] border-4 border-[#111111] rounded-tl-full"></div>
+               <div>
+                  <h4 className="text-xl font-black uppercase tracking-widest">Client-Side IndexedDB</h4>
+                  <p className="font-bold text-gray-600">True serverless privacy. Files live securely in your browser storage.</p>
                </div>
             </div>
           </div>

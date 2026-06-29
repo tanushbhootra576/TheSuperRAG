@@ -18,7 +18,7 @@ class Chunker:
             
         splitter = RecursiveCharacterTextSplitter(
             separators=separators,
-            chunk_size=750,
-            chunk_overlap=120
+            chunk_size=400,
+            chunk_overlap=50
         )
         return splitter.split_documents(docs)

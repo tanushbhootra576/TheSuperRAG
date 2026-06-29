@@ -139,7 +139,11 @@ def update_session(session_id: str, payload: SessionUpdate, db: Session = Depend
     return {"status": "not_found"}
 
 @app.post("/chat")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(http_req: Request, request: ChatRequest):
+    api_key = http_req.headers.get("x-api-key")
+    provider = http_req.headers.get("x-provider", "groq")
+    model = http_req.headers.get("x-model", request.llm_model)
+    
     rag_system = app.state.rag_system
     async def event_generator():
         from database import UserProfile
@@ -153,7 +157,10 @@ async def chat_stream(request: ChatRequest):
             "user_query": request.query,
             "current_search_query": request.query,
             "temperature": request.temperature,
-            "user_memory": user_memory
+            "user_memory": user_memory,
+            "api_key": api_key,
+            "provider": provider,
+            "model": model
         }
         final = {"generation": "", "retrieved_docs": [], "confidence": {}}
         current_query = request.query
@@ -216,6 +223,9 @@ async def upload_document(
 ):
     if url:
         chunks = app.state.doc_store.index_file(url, url, session_id=session_id)
+        already_indexed = url in app.state.doc_store.get_indexed_files()
+        if chunks == 0 and not already_indexed:
+            raise HTTPException(status_code=400, detail="Failed to extract text from URL or no content found.")
         return {"status": "success", "file": url, "chunks_indexed": chunks}
         
     if not file or not file.filename:
@@ -230,6 +240,14 @@ async def upload_document(
         shutil.copyfileobj(file.file, buffer)
 
     chunks = app.state.doc_store.index_file(save_path, file.filename, session_id=session_id)
+    
+    if os.path.exists(save_path):
+        os.remove(save_path)
+        
+    already_indexed = file.filename in app.state.doc_store.get_indexed_files()
+    if chunks == 0 and not already_indexed:
+        raise HTTPException(status_code=400, detail="Failed to parse document or no text found.")
+        
     return {"status": "success", "file": file.filename, "chunks_indexed": chunks}
 
 @app.delete("/documents/{filename}")
@@ -263,7 +281,7 @@ async def get_events():
     return StreamingResponse(dummy_events(), media_type="text/event-stream")
 
 @app.post("/sessions/{session_id}/evaluate", response_model=EvaluationResult)
-async def evaluate_session(session_id: str, db: Session = Depends(get_db)):
+async def evaluate_session(session_id: str, http_req: Request, db: Session = Depends(get_db)):
     messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(desc(ChatMessage.id)).limit(2).all()
     if len(messages) < 2:
         raise HTTPException(status_code=400, detail="Not enough messages to evaluate")
@@ -276,14 +294,12 @@ async def evaluate_session(session_id: str, db: Session = Depends(get_db)):
         
     context = "\n".join([f"[{i+1}] {d.get('snippet', '')}" for i, d in enumerate(asst_msg.docs)]) if asst_msg.docs else "No context retrieved."
     
-    from langchain_groq import ChatGroq
-    from langchain_core.messages import HumanMessage
-    import os
-    groq_key = os.getenv("GROQ_API_KEY")
-    if not groq_key:
-        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
-        
-    llm = ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=groq_key, temperature=0.0)
+    api_key = http_req.headers.get("x-api-key")
+    provider = http_req.headers.get("x-provider", "groq")
+    model = http_req.headers.get("x-model", "llama-3.1-8b-instant")
+    
+    state = {"api_key": api_key, "provider": provider, "model": model}
+    llm = app.state.rag_system._get_llm(state, temperature=0.0)
     
     prompt = f"""You are an expert evaluator for a RAG system.
 Evaluate the following interaction based on two metrics:

@@ -5,7 +5,8 @@ import dynamic from 'next/dynamic';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Link from 'next/link';
-import { Mic, Send, Copy, Share, Edit2, Trash2, Maximize2, Minimize2, Settings, FileText, UploadCloud, MessageSquare, Plus, ChevronDown, ChevronRight, Check, Menu, Clock, Network, Database, Home } from 'lucide-react';
+import { Mic, Send, Copy, Share, Edit2, Trash2, Maximize2, Minimize2, Settings, FileText, UploadCloud, MessageSquare, Plus, ChevronDown, ChevronRight, Check, Menu, Clock, Network, Database, Home, Key } from 'lucide-react';
+import { saveFileToLocal, getLocalFiles, deleteLocalFile } from '@/lib/db';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -27,6 +28,7 @@ type Message = {
   content: string;
   confidence?: Confidence;
   docs?: SourceDoc[];
+  timestamp?: string;
 };
 
 type Toast = {
@@ -51,6 +53,7 @@ export default function ChatPage() {
       role: 'assistant',
       content:
         'Hello! I am **TheSuperRAG** — powered by hybrid search, cross-encoder re-ranking, and self-healing. I cite my sources and show a confidence score with every answer.\n\nInitialise the database in the sidebar to begin.',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     },
   ]);
 
@@ -93,6 +96,27 @@ export default function ChatPage() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
   const [memoryText, setMemoryText] = useState('');
+
+  const [isApiSettingsOpen, setIsApiSettingsOpen] = useState(false);
+  const [apiSettings, setApiSettings] = useState({
+    apiKey: '',
+    provider: 'groq',
+    model: 'llama-3.1-8b-instant'
+  });
+
+  useEffect(() => {
+    const saved = localStorage.getItem('superRagApiSettings');
+    if (saved) {
+      try { setApiSettings(JSON.parse(saved)); } catch (e) {}
+    }
+  }, []);
+
+  const handleSaveApiSettings = (e: React.FormEvent) => {
+    e.preventDefault();
+    localStorage.setItem('superRagApiSettings', JSON.stringify(apiSettings));
+    setIsApiSettingsOpen(false);
+    addToast('API Settings Saved locally.', 'success');
+  };
 
   const fetchMemory = async () => {
     try {
@@ -232,9 +256,12 @@ export default function ChatPage() {
       const res = await fetch(`${API}/sessions/${id}/messages`);
       const data = await res.json();
       if (data.messages && data.messages.length > 0) {
-        setMessages(data.messages);
+        setMessages(data.messages.map((m: any) => ({
+          ...m,
+          timestamp: new Date(m.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        })));
       } else {
-        setMessages([{ role: 'assistant', content: 'Session loaded. Start chatting!' }]);
+        setMessages([{ role: 'assistant', content: 'Session loaded. Start chatting!', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
       }
     } catch {}
   };
@@ -244,7 +271,7 @@ export default function ChatPage() {
       const res = await fetch(`${API}/sessions`, { method: 'POST' });
       const data = await res.json();
       setSessionId(data.id);
-      setMessages([{ role: 'assistant', content: 'New chat started. I am ready!' }]);
+      setMessages([{ role: 'assistant', content: 'New saved chat started. I am ready!', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
       fetchSessions();
     } catch {}
   };
@@ -255,7 +282,7 @@ export default function ChatPage() {
       await fetch(`${API}/sessions/${id}`, { method: 'DELETE' });
       if (sessionId === id) {
         setSessionId(null);
-        setMessages([{ role: 'assistant', content: 'Select or start a new chat.' }]);
+        setMessages([{ role: 'assistant', content: 'Select or start a new chat.', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
       }
       fetchSessions();
     } catch {}
@@ -305,15 +332,31 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, liveStatus]);
 
-  // Check existing backend status on mount, including in-progress inits
   useEffect(() => {
     const checkStatus = async () => {
       try {
         const res = await fetch(`${API}/status`);
         const d = await res.json();
+        
+        // Sync local files to in-memory backend
+        try {
+          const localFiles = await getLocalFiles();
+          if (localFiles.length > 0) {
+            addToast(`Syncing ${localFiles.length} local files to memory...`, 'info');
+            for (const f of localFiles) {
+              const fd = new FormData();
+              fd.append('file', f);
+              if (sessionId) fd.append('session_id', sessionId);
+              await fetch(`${API}/upload`, { method: 'POST', body: fd });
+            }
+          }
+        } catch (e) {}
+
         if (d.initialized) {
           setIsInitialized(true);
-          setDocuments(d.documents || []);
+          const rDocs = await fetch(`${API}/documents`);
+          const dDocs = await rDocs.json();
+          setDocuments(dDocs.documents || []);
           setHybridEnabled(d.hybrid_search ?? false);
           fetchSessions();
         } else if (d.init_in_progress) {
@@ -326,10 +369,12 @@ export default function ChatPage() {
               if (s.initialized) {
                 clearInterval(poll);
                 setIsInitialized(true);
-                setDocuments(s.documents || []);
+                const rDocs = await fetch(`${API}/documents`);
+                const sDocs = await rDocs.json();
+                setDocuments(sDocs.documents || []);
                 setHybridEnabled(s.hybrid_search ?? false);
                 setIsInitializing(false);
-                addToast(`System ready -- ${(s.documents || []).length} document(s) indexed.`, 'success');
+                addToast(`System ready.`, 'success');
               } else if (s.init_error) {
                 clearInterval(poll);
                 setIsInitializing(false);
@@ -411,8 +456,8 @@ export default function ChatPage() {
     }));
     setMessages((prev) => [
       ...prev,
-      { role: 'user', content: userQuery },
-      { role: 'assistant', content: '', confidence: undefined, docs: [] } // placeholder for streaming
+      { role: 'user', content: userQuery, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+      { role: 'assistant', content: '', confidence: undefined, docs: [], timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } // placeholder for streaming
     ]);
     setIsGenerating(true);
     setLiveStatus('Starting search…');
@@ -420,7 +465,12 @@ export default function ChatPage() {
     try {
       const response = await fetch(`${API}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-api-key': apiSettings.apiKey,
+          'x-provider': apiSettings.provider,
+          'x-model': apiSettings.model
+        },
         body: JSON.stringify({
           query: userQuery,
           history: historyPayload,
@@ -519,6 +569,7 @@ export default function ChatPage() {
         method: 'DELETE',
       });
       if (res.ok) {
+        await deleteLocalFile(doc);
         addToast(`"${doc}" removed successfully.`, 'success');
         setDocuments((prev) => prev.filter((d) => d !== doc));
         setSelectedDocs((prev) => prev.filter((d) => d !== doc));
@@ -542,6 +593,7 @@ export default function ChatPage() {
     let uploaded = 0;
     for (const file of validFiles) {
       try {
+        await saveFileToLocal(file); // Save to IndexedDB
         const fd = new FormData();
         fd.append('file', file);
         if (sessionId) fd.append('session_id', sessionId);
@@ -903,14 +955,31 @@ export default function ChatPage() {
         {isInitialized && (
           <div className="px-6 flex-1 overflow-y-auto pb-6 mt-6">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
-              Recent Chats
+              Chat Modes
             </p>
             <button
-              onClick={createSession}
-              className="w-full py-2.5 mb-4 rounded-xl text-[13px] font-semibold bg-[#111111] hover:bg-[#333333] text-white transition-all shadow-sm"
+              onClick={() => {
+                setSessionId(null);
+                setMessages([{ role: 'assistant', content: 'Temporary Chat started. Messages will disappear when you refresh.', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+              }}
+              className={`w-full py-2.5 mb-2 rounded-xl text-[13px] font-semibold transition-all shadow-sm ${
+                sessionId === null
+                  ? 'bg-white border-[2px] border-[#2563EB] text-[#111111]'
+                  : 'bg-white border-[2px] border-[#E5E7EB] text-gray-500 hover:bg-gray-50'
+              }`}
             >
-              + New Chat
+              Temporary Chat
             </button>
+            <button
+              onClick={createSession}
+              className="w-full py-2.5 mb-6 rounded-xl text-[13px] font-semibold bg-[#111111] hover:bg-[#333333] text-white transition-all shadow-sm flex items-center justify-center gap-2"
+            >
+              <Plus size={16} /> New Saved Chat
+            </button>
+
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
+              Saved History
+            </p>
             <div className="space-y-2">
               {sessions.map((s) => (
                 <div
@@ -1004,6 +1073,59 @@ export default function ChatPage() {
           </div>
         )}
 
+        {/* API Settings Modal */}
+        {isApiSettingsOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col border-[3px] border-[#111111] shadow-[8px_8px_0px_0px_rgba(17,17,17,1)]">
+              <div className="p-4 border-b-[2px] border-[#111111] flex justify-between items-center">
+                <h3 className="font-black text-[#111111] uppercase tracking-tight flex items-center gap-2">
+                  <Key size={20} className="text-[#EF4444]" /> API Settings
+                </h3>
+                <button onClick={() => setIsApiSettingsOpen(false)} className="text-[#111111] hover:text-[#EF4444] font-black text-xl">×</button>
+              </div>
+              <form onSubmit={handleSaveApiSettings} className="p-4 flex flex-col gap-4">
+                <p className="text-xs text-gray-500 font-medium">Your API keys are saved locally in your browser.</p>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase font-black tracking-wider text-gray-500">Provider</label>
+                  <select
+                    className="w-full border-[2px] border-[#111111] p-2 text-sm font-semibold rounded-none focus:outline-none focus:border-[#2563EB]"
+                    value={apiSettings.provider}
+                    onChange={(e) => setApiSettings({...apiSettings, provider: e.target.value})}
+                  >
+                    <option value="groq">Groq</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic (Claude)</option>
+                    <option value="gemini">Google GenAI</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase font-black tracking-wider text-gray-500">Model Name</label>
+                  <input
+                    type="text"
+                    className="w-full border-[2px] border-[#111111] p-2 text-sm font-semibold rounded-none focus:outline-none focus:border-[#2563EB]"
+                    value={apiSettings.model}
+                    onChange={(e) => setApiSettings({...apiSettings, model: e.target.value})}
+                    placeholder="e.g. llama-3.1-8b-instant"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase font-black tracking-wider text-gray-500">API Key</label>
+                  <input
+                    type="password"
+                    className="w-full border-[2px] border-[#111111] p-2 text-sm font-semibold rounded-none focus:outline-none focus:border-[#2563EB]"
+                    value={apiSettings.apiKey}
+                    onChange={(e) => setApiSettings({...apiSettings, apiKey: e.target.value})}
+                    placeholder="sk-..."
+                  />
+                </div>
+                <button type="submit" className="mt-2 w-full py-3 bg-[#111111] text-white font-black uppercase tracking-wider text-sm hover:bg-[#2563EB] transition-colors">
+                  Save Locally
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* Floating Right Toolbar */}
         <div className="absolute right-4 md:right-6 top-6 flex flex-col gap-3 z-30">
           <Link href="/" title="Home" className="p-3 bg-white border border-[#E5E7EB] rounded-full shadow-sm hover:shadow-md hover:bg-[#F9FAFB] text-gray-500 hover:text-[#2563EB] transition-all group">
@@ -1015,6 +1137,13 @@ export default function ChatPage() {
             className="p-3 bg-white border border-[#E5E7EB] rounded-full shadow-sm hover:shadow-md hover:bg-[#F9FAFB] text-gray-500 hover:text-purple-600 transition-all group"
           >
             <Settings className="w-5 h-5 group-hover:scale-110 transition-transform" />
+          </button>
+          <button 
+            onClick={() => setIsApiSettingsOpen(true)} 
+            title="API Settings (BYOK)" 
+            className="p-3 bg-white border border-[#E5E7EB] rounded-full shadow-sm hover:shadow-md hover:bg-[#F9FAFB] text-gray-500 hover:text-[#EF4444] transition-all group"
+          >
+            <Key className="w-5 h-5 group-hover:scale-110 transition-transform" />
           </button>
           <button 
             onClick={() => setIsGraphExpanded(true)} 
@@ -1070,12 +1199,12 @@ export default function ChatPage() {
                   {msg.role === 'assistant' ? (
                     <>
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-                      <div className="text-[11px] text-gray-500 mt-2 text-left">10:30 AM</div>
+                      <div className="text-[11px] text-gray-500 mt-2 text-left">{msg.timestamp || 'Just now'}</div>
                     </>
                   ) : (
                     <>
                       {msg.content}
-                      <div className="text-[11px] text-gray-600 mt-2 text-right">10:30 AM</div>
+                      <div className="text-[11px] text-[#856c12] mt-2 text-right">{msg.timestamp || 'Just now'}</div>
                     </>
                   )}
                 </div>
@@ -1113,9 +1242,16 @@ export default function ChatPage() {
                     {sessionId && (
                       <button
                         onClick={async () => {
+                          addToast('Evaluating generated answer...', 'info');
                           try {
-                            addToast('Evaluating response...', 'info');
-                            const res = await fetch(`${API}/sessions/${sessionId}/evaluate`, { method: 'POST' });
+                            const res = await fetch(`${API}/sessions/${sessionId}/evaluate`, { 
+                              method: 'POST',
+                              headers: { 
+                                'x-api-key': apiSettings.apiKey,
+                                'x-provider': apiSettings.provider,
+                                'x-model': apiSettings.model
+                              }
+                            });
                             if (res.ok) {
                               const data = await res.json();
                               addToast(`Evaluation: Faithfulness ${data.faithfulness_score.toFixed(2)}, Relevance ${data.answer_relevance_score.toFixed(2)}`, 'success');

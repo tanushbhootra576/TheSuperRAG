@@ -12,7 +12,7 @@ class DocumentLoader:
         if is_web:
             if "youtube.com" in source_str or "youtu.be" in source_str:
                 from langchain_community.document_loaders import YoutubeLoader
-                loader = YoutubeLoader.from_youtube_url(source_str, add_video_info=False)
+                loader = YoutubeLoader.from_youtube_url(source_str, add_video_info=False, language=["en", "hi", "en-IN", "hi-IN", "hi-Latn"])
             else:
                 from langchain_community.document_loaders import WebBaseLoader
                 loader = WebBaseLoader(source_str)

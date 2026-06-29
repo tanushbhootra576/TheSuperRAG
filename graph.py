@@ -7,8 +7,8 @@ from ingest import DocumentStore
 from reranker import CrossEncoderReranker
 import asyncio
 
-RETRIEVAL_K = 5
-RERANK_TOP_K = 2
+RETRIEVAL_K = 3
+RERANK_TOP_K = 1
 
 class DirectWorkflow:
     def __init__(self, rag_graph):
@@ -17,7 +17,7 @@ class DirectWorkflow:
     async def astream_events(self, inputs, version="v2"):
         state = inputs.copy()
         
-        sub_queries = await self.rag_graph.decompose_query_step(state["user_query"])
+        sub_queries = await self.rag_graph.decompose_query_step(state)
         yield {"event": "decomposed", "sub_queries": [{"index": i+1, "query": sq, "tool": "pending"} for i, sq in enumerate(sub_queries)]}
         
         # 1. Agent Router
@@ -26,7 +26,7 @@ class DirectWorkflow:
             "metadata": {"langgraph_node": "smart_router"}
         }
         
-        llm = self.rag_graph._get_llm(temperature=0.0)
+        llm = self.rag_graph._get_llm(state, temperature=0.0)
         from langchain_core.tools import tool
         from tools import execute_web_search, execute_sql_query
         import json
@@ -39,14 +39,14 @@ class DirectWorkflow:
         @tool
         async def sql_query(query: str):
             """Query the structured SQL database for analytics, sales, or business data."""
-            return await execute_sql_query(query)
+            return await execute_sql_query(query, llm=llm)
             
         @tool
         async def vector_search(query: str):
             """Search the document knowledge base for internal documents, guides, and texts."""
             return "Proceed to vector search"
             
-        tools = [web_search, sql_query, vector_search]
+        tools = [vector_search]
         llm_with_tools = llm.bind_tools(tools)
         
         from langchain_core.messages import SystemMessage, HumanMessage
@@ -56,42 +56,8 @@ class DirectWorkflow:
         confidences = []
         
         for sq in sub_queries:
-            messages = [SystemMessage(content=router_prompt), HumanMessage(content=sq)]
-            
-            try:
-                router_response = await llm_with_tools.ainvoke(messages)
-                tool_calls = router_response.tool_calls
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).warning(f"Router LLM failed to invoke tools, defaulting to vector search: {e}")
-                tool_calls = [{"name": "vector_search", "args": {"query": sq}}]
-            
             skip_rag = False
-            if tool_calls:
-                tool_call = tool_calls[0]
-                if tool_call["name"] == "web_search":
-                    yield {"event": "tool_start", "tool": "web_search", "query": tool_call["args"].get("query", str(tool_call["args"]))}
-                    res = await web_search.ainvoke(tool_call["args"])
-                    for idx, r in enumerate(res):
-                        all_retrieved_docs.append({
-                            "file": "Web: " + r["source"],
-                            "page": "1",
-                            "snippet": r["content"]
-                        })
-                    yield {"event": "tool_done", "tool": "web_search", "result_count": len(res)}
-                    skip_rag = True
-                elif tool_call["name"] == "sql_query":
-                    yield {"event": "tool_start", "tool": "sql_query", "query": tool_call["args"].get("query", str(tool_call["args"]))}
-                    res = await sql_query.ainvoke(tool_call["args"])
-                    for idx, r in enumerate(res):
-                        all_retrieved_docs.append({
-                            "file": "SQL Database",
-                            "page": "1",
-                            "snippet": json.dumps(r)
-                        })
-                    yield {"event": "tool_done", "tool": "sql_query", "result_count": len(res)}
-                    skip_rag = True
-                    
+            
             if not skip_rag:
                 yield {"event": "tool_start", "tool": "vector_search", "query": sq}
                 # 1.5. Rewrite Query
@@ -100,7 +66,7 @@ class DirectWorkflow:
                     "metadata": {"langgraph_node": "rewrite_query"}
                 }
                 
-                transformed_query = await self.rag_graph.transform_query_step({"user_query": sq})
+                transformed_query = await self.rag_graph.transform_query_step({"user_query": sq, **state})
                 
                 yield {
                     "event": "on_chain_end",
@@ -109,7 +75,7 @@ class DirectWorkflow:
                 }
                 
                 # Retrieve
-                retrieved_docs, confidence = await self.rag_graph.retrieve_step({"current_search_query": transformed_query})
+                retrieved_docs, confidence = await self.rag_graph.retrieve_step({"current_search_query": transformed_query, **state})
                 all_retrieved_docs.extend(retrieved_docs)
                 confidences.append(confidence["score"])
                 yield {"event": "tool_done", "tool": "vector_search", "result_count": len(retrieved_docs)}
@@ -131,9 +97,6 @@ class DirectWorkflow:
             "metadata": {"langgraph_node": "retrieve"},
             "data": {"output": {"retrieved_docs": all_retrieved_docs, "confidence": final_confidence}}
         }
-        
-        # 3. Generate (streaming)
-
         
         # 3. Generate (streaming)
         yield {
@@ -159,7 +122,7 @@ class DirectWorkflow:
             elif m["role"] == "assistant": messages.append(AIMessage(content=m["content"]))
         messages.append(HumanMessage(content=state["user_query"]))
         
-        llm = self.rag_graph._get_llm(temperature=state.get("temperature", 0.0))
+        llm = self.rag_graph._get_llm(state, temperature=state.get("temperature", 0.0))
         full_generation = ""
         
         async for chunk in llm.astream(messages):
@@ -180,24 +143,34 @@ class DirectWorkflow:
 class RAGGraph:
     def __init__(self, doc_store: DocumentStore):
         self.doc_store = doc_store
-        self.groq_key = os.getenv("GROQ_API_KEY")
-        if not self.groq_key:
-            raise ValueError("GROQ_API_KEY not found in environment.")
-
         self.reranker = CrossEncoderReranker()
-        self.llm = ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=self.groq_key)
         self.app = DirectWorkflow(self)
         print(f"\n[OK] Direct RAGGraph ready.\n")
 
-    def _get_llm(self, temperature: float = 0.0):
-        return ChatGroq(
-            temperature=temperature,
-            model_name="llama-3.1-8b-instant",
-            groq_api_key=self.groq_key,
-        )
+    def _get_llm(self, state, temperature: float = 0.0):
+        provider = state.get("provider", "groq")
+        api_key = state.get("api_key")
+        model = state.get("model", "llama-3.1-8b-instant")
+        
+        if not api_key:
+            api_key = os.getenv("GROQ_API_KEY")
+            
+        if provider == "openai":
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(model=model, api_key=api_key, temperature=temperature)
+        elif provider == "anthropic":
+            from langchain_anthropic import ChatAnthropic
+            return ChatAnthropic(model_name=model, api_key=api_key, temperature=temperature)
+        elif provider == "gemini":
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            return ChatGoogleGenerativeAI(model=model, google_api_key=api_key, temperature=temperature)
+        else: # groq
+            from langchain_groq import ChatGroq
+            return ChatGroq(model_name=model, groq_api_key=api_key, temperature=temperature)
 
-    async def decompose_query_step(self, query: str):
-        llm = self._get_llm(temperature=0.0)
+    async def decompose_query_step(self, state):
+        query = state.get("user_query", "")
+        llm = self._get_llm(state, temperature=0.0)
         prompt = (
             "You are an expert query analyzer. Determine if the following user query is complex and needs to be broken down into multiple simpler sub-queries to be answered correctly.\n"
             "If the query asks to combine or compare internal data (like orders, sales, DB) with external data (like news, web search), you MUST break it down into 2-3 simpler sub-queries.\n"
@@ -221,7 +194,6 @@ class RAGGraph:
             cleaned_sqs = []
             for sq in sub_queries:
                 if isinstance(sq, dict):
-                    # In case the LLM returned [{"query": "..."}] instead of ["..."]
                     cleaned_sqs.append(sq.get("query", str(sq)))
                 else:
                     cleaned_sqs.append(str(sq))
@@ -231,7 +203,7 @@ class RAGGraph:
 
     async def transform_query_step(self, state):
         query = state["user_query"]
-        llm = self._get_llm(temperature=0.7)
+        llm = self._get_llm(state, temperature=0.7)
         
         from langchain_core.messages import SystemMessage, HumanMessage
         prompt = (
@@ -268,7 +240,6 @@ class RAGGraph:
             })
             
         avg_score = sum(d["score"] for d in retrieved_docs) / max(len(retrieved_docs), 1) if retrieved_docs else 0.0
-        # Simulated confidence score
         conf_val = min(max(avg_score, 0.0), 1.0)
         
         if conf_val > 0.8: confidence = {"score": round(conf_val*10, 1), "label": "High", "emoji": ""}
@@ -276,26 +247,3 @@ class RAGGraph:
         else: confidence = {"score": round(conf_val*10, 1), "label": "Low", "emoji": ""}
         
         return retrieved_docs, confidence
-
-    async def generate_step(self, state):
-        docs = state.get("retrieved_docs", [])
-        context_parts = []
-        for i, d in enumerate(docs):
-            context_parts.append(f"[{i+1}] Source: {d['file']}, Page: {d['page']}\n{d['snippet']}")
-        context = "\n\n".join(context_parts)
-        
-        memory = state.get("user_memory", "")
-        memory_str = f"\nUser Memory/Preferences:\n{memory}\n" if memory else ""
-        
-        system_prompt = f"You are the Answer Agent. Answer the user's question. Cite document sources strictly using [1], [2], etc.{memory_str}\nContext from Documents:\n{context}"
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-        
-        messages = [SystemMessage(content=system_prompt)]
-        for m in state.get("chat_history", []):
-            if m["role"] == "user": messages.append(HumanMessage(content=m["content"]))
-            elif m["role"] == "assistant": messages.append(AIMessage(content=m["content"]))
-        messages.append(HumanMessage(content=state["user_query"]))
-        
-        llm = self._get_llm()
-        response = await llm.ainvoke(messages)
-        return response.content

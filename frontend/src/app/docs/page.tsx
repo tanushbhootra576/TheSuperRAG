@@ -49,6 +49,8 @@ export default function DocsPage() {
                 <li><a href="#document-ingestion" className="hover:text-[#EF4444] transition-colors">Document Ingestion</a></li>
                 <li><a href="#hybrid-search" className="hover:text-[#EF4444] transition-colors">Hybrid Search</a></li>
                 <li><a href="#cross-encoder" className="hover:text-[#EF4444] transition-colors">Cross-Encoder</a></li>
+                <li><a href="#byok" className="hover:text-[#EF4444] transition-colors">BYOK Integration</a></li>
+                <li><a href="#local-storage" className="hover:text-[#EF4444] transition-colors">Zero Server Storage</a></li>
               </ul>
             </div>
 
@@ -137,6 +139,37 @@ export default function DocsPage() {
             <div className="w-full bg-[#111111] text-white p-8 border-b-8 border-[#EF4444]">
               <p className="text-xl font-black uppercase tracking-widest">Result: Unmatched Precision.</p>
               <p className="text-gray-400 mt-2 font-medium">Only the highest-scoring context is passed to the LLM generation phase.</p>
+            </div>
+          </div>
+
+          <div id="byok" className="mb-16 pt-8 scroll-mt-24">
+            <h2 className="text-4xl font-black uppercase tracking-tight mb-6 border-l-8 border-[#FFD230] pl-6">
+              BYOK Integration
+            </h2>
+            <p className="text-lg text-gray-600 leading-relaxed mb-6">
+              You can now Bring Your Own Key (BYOK)! This allows you to hot-swap your underlying LLM provider instantly from the UI without changing any code or environment variables.
+            </p>
+            <ul className="space-y-3 text-lg text-gray-600 list-disc pl-6 font-medium mb-6">
+              <li>OpenAI (GPT-4o, etc)</li>
+              <li>Anthropic (Claude 3.5 Sonnet, etc)</li>
+              <li>Google GenAI (Gemini 1.5 Pro)</li>
+              <li>Groq (Llama 3.1)</li>
+            </ul>
+            <div className="w-full bg-[#F9FAFB] text-[#111111] p-8 border-4 border-[#111111] shadow-[8px_8px_0px_#111111]">
+              <p className="font-bold">Keys are saved locally in your browser's localStorage and injected into HTTP headers. The server is entirely stateless regarding API keys.</p>
+            </div>
+          </div>
+
+          <div id="local-storage" className="mb-16 pt-8 scroll-mt-24">
+            <h2 className="text-4xl font-black uppercase tracking-tight mb-6 border-l-8 border-[#2563EB] pl-6">
+              Zero Server Storage
+            </h2>
+            <p className="text-lg text-gray-600 leading-relaxed mb-6">
+              To maximize privacy and minimize deployment costs, we have shifted the paradigm of RAG storage.
+            </p>
+            <div className="w-full bg-[#111111] text-white p-8 border-b-8 border-[#2563EB]">
+              <p className="text-xl font-black uppercase tracking-widest">Your Data, Your Browser.</p>
+              <p className="text-gray-400 mt-2 font-medium">When you upload a PDF, it is saved securely to your browser's IndexedDB. The backend's Qdrant vector database runs in memory-only mode. Upon reloading, your browser silently syncs the documents back to memory instantly.</p>
             </div>
           </div>
 

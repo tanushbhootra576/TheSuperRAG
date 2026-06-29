@@ -7,6 +7,8 @@ It provides an advanced document ingestion and chat interface using FastAPI, Lan
 ## Features
 
 - **Hybrid Search & Re-ranking:** Combines dense and sparse embeddings to find the most relevant context, scored with confidence.
+- **BYOK (Bring Your Own Key):** Users can enter their own API keys (Groq, OpenAI, Anthropic, Gemini) from the frontend, ensuring creator API keys are safe.
+- **Local-First File Storage:** Documents are not stored on the server disk. Files are kept in the user's browser database (IndexedDB) and processed entirely in-memory using Qdrant.
 - **Agentic Query Decomposition:** Automatically breaks down complex multi-hop questions into parallel sub-queries.
 - **Multi-Tool Routing:** Dynamically executes Vector Search, Web Search (Tavily), and SQL Database queries.
 - **Live Tool Streaming UI:** Visualizes background tool execution and query decomposition in real-time in the frontend.
