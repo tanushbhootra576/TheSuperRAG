@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     os.makedirs(DATA_FOLDER, exist_ok=True)
     app.state.doc_store = DocumentStore(folder_path=DATA_FOLDER, collection_name=COLLECTION_NAME)
     app.state.rag_system = RAGGraph(doc_store=app.state.doc_store)
-    app.state.doc_store._auto_index_folder()
+    # _auto_index_folder() is removed because indexing on 0.1 CPU blocks server startup and causes Render timeout. Files are now handled via IndexedDB anyway.
     yield
 
 app = FastAPI(
