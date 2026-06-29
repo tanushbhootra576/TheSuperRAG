@@ -20,5 +20,5 @@ ENV PYTHONUTF8=1
 # Expose port
 EXPOSE 8000
 
-# Start server using Uvicorn directly
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Start server using Uvicorn directly, respecting the PORT env var (defaults to 8000)
+CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4"]
