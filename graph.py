@@ -143,7 +143,8 @@ class DirectWorkflow:
 class RAGGraph:
     def __init__(self, doc_store: DocumentStore):
         self.doc_store = doc_store
-        self.reranker = CrossEncoderReranker()
+        # Disabled reranker to save 100MB+ RAM for Render Free Tier OOM fixes
+        # self.reranker = CrossEncoderReranker()
         self.app = DirectWorkflow(self)
         print(f"\n[OK] Direct RAGGraph ready.\n")
 
@@ -226,7 +227,10 @@ class RAGGraph:
         
         raw_docs = await retriever.ainvoke(query)
                     
-        final_docs, scores = self.reranker.rerank(query, raw_docs, top_k=RERANK_TOP_K)
+        # Disabled cross-encoder to prevent Render OOM
+        # final_docs, scores = self.reranker.rerank(query, raw_docs, top_k=RERANK_TOP_K)
+        final_docs = raw_docs[:RERANK_TOP_K]
+        scores = [1.0] * len(final_docs)
             
         retrieved_docs = []
         for i, d in enumerate(final_docs):
