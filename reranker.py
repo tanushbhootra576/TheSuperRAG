@@ -17,17 +17,17 @@ from langchain_core.documents import Document
 
 class CrossEncoderReranker:
     """
-    Re-ranks retrieved documents using a cross-encoder model.
+    Re-ranks retrieved documents using a cross-encoder model via FastEmbed.
     Retrieves K candidates then re-ranks to the best top_k.
     """
 
-    MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    MODEL_NAME = "Xenova/ms-marco-MiniLM-L-6-v2"
 
     def __init__(self, model_name: str = None):
         model = model_name or self.MODEL_NAME
-        print(f"  [>] Loading cross-encoder re-ranker: {model}...")
-        from sentence_transformers import CrossEncoder
-        self.model = CrossEncoder(model)
+        print(f"  [>] Loading cross-encoder re-ranker: {model} via FastEmbed...")
+        from fastembed.rerank.cross_encoder import TextCrossEncoder
+        self.model = TextCrossEncoder(model)
         print("  [OK] Re-ranker ready.")
 
     def rerank(
@@ -50,10 +50,12 @@ class CrossEncoderReranker:
         if not docs:
             return [], []
 
-        # Build (query, passage) pairs for the cross-encoder
-        pairs = [(query, doc.page_content) for doc in docs]
-        raw_scores = self.model.predict(pairs)
-
+        # Build passage list for the cross-encoder
+        passages = [doc.page_content for doc in docs]
+        
+        # FastEmbed TextCrossEncoder takes (query, passages) generator
+        raw_scores = list(self.model.rerank(query, passages))
+        
         # Sort descending by score and take top_k
         scored = sorted(zip(raw_scores, docs), key=lambda x: x[0], reverse=True)
         top_docs = [doc for _, doc in scored[:top_k]]

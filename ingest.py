@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 from dotenv import load_dotenv
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import (
     Distance,
@@ -48,8 +48,8 @@ class DocumentStore:
         os.makedirs(self.qdrant_path, exist_ok=True)
         os.makedirs(self.folder_path, exist_ok=True)
 
-        logger.info("Loading dense embedding model (all-MiniLM-L6-v2)...")
-        self.dense_embeddings = HuggingFaceEmbeddings(model_name=DENSE_MODEL)
+        logger.info("Loading dense embedding model (all-MiniLM-L6-v2) via FastEmbed...")
+        self.dense_embeddings = FastEmbedEmbeddings(model_name=DENSE_MODEL)
         self.client = QdrantClient(location=":memory:")
 
         self._migrate_if_needed()
