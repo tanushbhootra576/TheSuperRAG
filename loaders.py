@@ -54,6 +54,7 @@ class DocumentLoader:
             else:
                 doc.metadata["source_file"] = path.name
                 doc.metadata["file_type"] = ext[1:]
-                doc.metadata["page_number"] = doc.metadata.get("page", i + 1)
+                # PyPDFLoader returns 0-indexed 'page', so we add 1 for human readability
+                doc.metadata["page_number"] = doc.metadata.get("page", i) + 1
                 
         return docs
