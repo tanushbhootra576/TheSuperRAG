@@ -49,7 +49,7 @@ class DocumentStore:
         os.makedirs(self.folder_path, exist_ok=True)
 
         logger.info("Loading dense embedding model (all-MiniLM-L6-v2) via FastEmbed...")
-        self.dense_embeddings = FastEmbedEmbeddings(model_name=DENSE_MODEL)
+        self.dense_embeddings = FastEmbedEmbeddings(model_name=DENSE_MODEL, threads=1)
         self.client = QdrantClient(location=":memory:")
 
         self._migrate_if_needed()

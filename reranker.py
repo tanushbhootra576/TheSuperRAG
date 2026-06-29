@@ -27,7 +27,7 @@ class CrossEncoderReranker:
         model = model_name or self.MODEL_NAME
         print(f"  [>] Loading cross-encoder re-ranker: {model} via FastEmbed...")
         from fastembed.rerank.cross_encoder import TextCrossEncoder
-        self.model = TextCrossEncoder(model)
+        self.model = TextCrossEncoder(model, threads=1)
         print("  [OK] Re-ranker ready.")
 
     def rerank(
