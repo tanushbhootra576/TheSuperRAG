@@ -313,9 +313,15 @@ export default function ChatPage() {
   const fetchGraph = async () => {
     try {
       const res = await fetch(`${API}/graph`);
+      if (!res.ok) {
+        setGraphData({ nodes: [], links: [] });
+        return;
+      }
       const data = await res.json();
-      setGraphData(data);
-    } catch {}
+      setGraphData(data?.nodes ? data : { nodes: [], links: [] });
+    } catch {
+      setGraphData({ nodes: [], links: [] });
+    }
   };
 
   useEffect(() => {
@@ -856,7 +862,7 @@ export default function ChatPage() {
             </button>
           </div>
           <div className="w-[90vw] h-[90vh] bg-white border-[4px] border-[#111111] overflow-hidden relative shadow-[16px_16px_0px_0px_rgba(17,17,17,1)]">
-            {graphData.nodes.length > 0 ? (
+            {graphData?.nodes?.length > 0 ? (
               <ForceGraph2D
                 graphData={graphData}
                 width={typeof window !== 'undefined' ? window.innerWidth * 0.9 : 800}
