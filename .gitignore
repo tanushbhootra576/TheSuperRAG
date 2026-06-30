@@ -101,7 +101,6 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
 .venv
 env/
 venv/
@@ -144,3 +143,5 @@ frontend/node_modules/
 frontend/out/
 frontend/build/
 frontend/.env*.local
+config.bat
+node_modules
